@@ -7,6 +7,8 @@ from pydantic import BaseModel
 
 from src.predict import predict_grid_stress
 from src.intervention import plan_intervention
+from src.ward_risk import predict_ward_stress
+from src.agent_payload import build_agent_rebalance_payload
 
 
 app = FastAPI(title="GridFlex ML API")
@@ -56,6 +58,8 @@ def root() -> Dict[str, Any]:
             "intervention": "POST /flex/intervention",
             "demo_run": "GET /demo/run",
             "demo_stress": "GET /demo/stress",
+            "demo_wards": "GET /demo/wards",
+            "agent_rebalance": "GET /agent/rebalance",
         },
     }
 
@@ -72,7 +76,12 @@ def data_status() -> Dict[str, Any]:
     predisp_path = Path("data/processed/latest_predisp_totals.json")
     weather_path = Path("data/processed/latest_weather.json")
     demand_history_path = Path("data/processed/demand_history.csv")
+    historical_demand_path = Path("data/processed/historical_demand.csv")
     flex_assets_path = Path("data/processed/flex_assets.json")
+    ward_features_path = Path("data/processed/ward_features.csv")
+    model_path = Path("artifacts/grid_stress_xgb.json")
+    feature_columns_path = Path("artifacts/feature_columns.json")
+    training_status_path = Path("artifacts/model_training_status.json")
 
     live_row: Dict[str, Any] = {}
     if live_path.exists():
@@ -81,6 +90,15 @@ def data_status() -> Dict[str, Any]:
 
     metadata = live_row.get("_metadata", {})
 
+    model_training = "historical_ieso_demand_with_engineered_stress_labels"
+    if training_status_path.exists():
+        try:
+            with training_status_path.open("r") as file:
+                training_status = json.load(file)
+            model_training = training_status.get("model_training", model_training)
+        except Exception:
+            pass
+
     return {
         "files": {
             "live_feature_row": live_path.exists(),
@@ -88,7 +106,12 @@ def data_status() -> Dict[str, Any]:
             "latest_predisp_totals": predisp_path.exists(),
             "latest_weather": weather_path.exists(),
             "demand_history": demand_history_path.exists(),
+            "historical_demand": historical_demand_path.exists(),
             "flex_assets": flex_assets_path.exists(),
+            "ward_features": ward_features_path.exists(),
+            "model_artifact": model_path.exists(),
+            "feature_columns": feature_columns_path.exists(),
+            "model_training_status": training_status_path.exists(),
         },
         "data_sources": {
             "ieso_realtime": metadata.get("realtime_source", "unknown"),
@@ -97,13 +120,18 @@ def data_status() -> Dict[str, Any]:
             "reserve": metadata.get("reserve_source", "unknown"),
             "generation": metadata.get("generation_source", "unknown"),
             "lags": metadata.get("lag_source", "unknown"),
-            "model_training": "synthetic_training_data_currently",
-            "intervention_assets": "synthetic_with_Toronto_asset_categories_currently",
+            "model_training": model_training,
+            "ward_layer": (
+                "ward_load_share_available_flex_local_vulnerability"
+                if ward_features_path.exists()
+                else "missing_ward_features"
+            ),
         },
         "honesty_note": (
-            "Live feature row uses real IESO demand, real IESO predispatch forecast, "
-            "and real weather where available. Reserve, generation, and some lag features "
-            "may still use fallbacks until full historical storage and GenOutputCapability are wired."
+            "The system stress model is trained on historical IESO demand with engineered "
+            "grid-stress labels. Ward-level outputs are estimated by distributing Ontario "
+            "system stress across Toronto wards using ward_load_share, available_flex_mw, "
+            "and local_vulnerability_score. They are not trained on true ward-level outage labels."
         ),
     }
 
@@ -148,16 +176,19 @@ def flex_intervention(request: InterventionRequest) -> Dict[str, Any]:
     )
 
 
+def strip_non_model_fields(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        key: value
+        for key, value in row.items()
+        if key not in ["timestamp", "_metadata"]
+    }
+
+
 @app.get("/demo/run")
 def demo_run() -> Dict[str, Any]:
     live_row = grid_live()
 
-    model_row = {
-        key: value
-        for key, value in live_row.items()
-        if key not in ["timestamp", "_metadata"]
-    }
-
+    model_row = strip_non_model_fields(live_row)
     prediction = predict_grid_stress(model_row)
 
     intervention = plan_intervention(
@@ -177,15 +208,16 @@ def demo_run() -> Dict[str, Any]:
 def demo_stress() -> Dict[str, Any]:
     path = Path("data/mock/mock_live_grid.json")
 
+    if not path.exists():
+        return {
+            "error": "Missing mock live grid file",
+            "expected_path": str(path),
+        }
+
     with path.open("r") as file:
         live_row = json.load(file)
 
-    model_row = {
-        key: value
-        for key, value in live_row.items()
-        if key not in ["timestamp", "_metadata"]
-    }
-
+    model_row = strip_non_model_fields(live_row)
     prediction = predict_grid_stress(model_row)
 
     intervention = plan_intervention(
@@ -199,3 +231,53 @@ def demo_stress() -> Dict[str, Any]:
         "prediction": prediction,
         "intervention": intervention,
     }
+
+
+@app.get("/demo/wards")
+def demo_wards() -> Dict[str, Any]:
+    path = Path("data/mock/mock_live_grid.json")
+
+    if not path.exists():
+        return {
+            "error": "Missing mock live grid file",
+            "expected_path": str(path),
+        }
+
+    with path.open("r") as file:
+        stress_row = json.load(file)
+
+    model_row = strip_non_model_fields(stress_row)
+
+    prediction = predict_grid_stress(model_row)
+    prediction["estimated_system_stress_duration_hours"] = 3.0
+
+    return predict_ward_stress(
+        system_prediction=prediction,
+        live_row=stress_row,
+    )
+
+
+@app.get("/agent/rebalance")
+def agent_rebalance() -> Dict[str, Any]:
+    path = Path("data/mock/mock_live_grid.json")
+
+    if not path.exists():
+        return {
+            "error": "Missing mock live grid file",
+            "expected_path": str(path),
+        }
+
+    with path.open("r") as file:
+        stress_row = json.load(file)
+
+    model_row = strip_non_model_fields(stress_row)
+
+    prediction = predict_grid_stress(model_row)
+    prediction["estimated_system_stress_duration_hours"] = 3.0
+
+    ward_result = predict_ward_stress(
+        system_prediction=prediction,
+        live_row=stress_row,
+    )
+
+    return build_agent_rebalance_payload(ward_result)

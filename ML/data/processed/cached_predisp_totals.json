@@ -1,7 +1,7 @@
 {
   "source": "IESO PredispTotals",
   "source_file": "PUB_PredispTotals.csv",
-  "timestamp": "2026-05-30T19:02:00.944418",
+  "timestamp": "2026-05-30T19:13:48.577123",
   "forecast_market_demand_next_1h_mw": 16760.9,
   "forecast_market_demand_next_3h_mw": 16354.5,
   "operating_reserve_requirement_next_3h_mw": null,
@@ -15,5 +15,5 @@
     4,
     5
   ],
-  "ingested_at_utc": "2026-05-30T19:02:00.944454"
+  "ingested_at_utc": "2026-05-30T19:13:48.577174"
 }

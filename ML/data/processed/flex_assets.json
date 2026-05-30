@@ -47,6 +47,6 @@
     }
   ],
   "total_available_mw": 650,
-  "built_at_utc": "2026-05-30T19:02:01.661764+00:00",
+  "built_at_utc": "2026-05-30T19:13:51.245418+00:00",
   "honesty_note": "Current asset MW values are simulated for the hackathon demo. Asset categories are designed to map to Toronto Open Data datasets."
 }
