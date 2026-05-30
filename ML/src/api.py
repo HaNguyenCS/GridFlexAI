@@ -49,10 +49,13 @@ def root() -> Dict[str, Any]:
         "docs": "/docs",
         "endpoints": {
             "health": "GET /health",
+            "data_status": "GET /data/status",
             "live_mock": "GET /grid/live-mock",
             "live": "GET /grid/live",
             "predict": "POST /grid/predict",
             "intervention": "POST /flex/intervention",
+            "demo_run": "GET /demo/run",
+            "demo_stress": "GET /demo/stress",
         },
     }
 
@@ -60,6 +63,49 @@ def root() -> Dict[str, Any]:
 @app.get("/health")
 def health() -> Dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/data/status")
+def data_status() -> Dict[str, Any]:
+    live_path = Path("data/processed/live_feature_row.json")
+    realtime_path = Path("data/processed/latest_realtime_totals.json")
+    predisp_path = Path("data/processed/latest_predisp_totals.json")
+    weather_path = Path("data/processed/latest_weather.json")
+    demand_history_path = Path("data/processed/demand_history.csv")
+    flex_assets_path = Path("data/processed/flex_assets.json")
+
+    live_row: Dict[str, Any] = {}
+    if live_path.exists():
+        with live_path.open("r") as file:
+            live_row = json.load(file)
+
+    metadata = live_row.get("_metadata", {})
+
+    return {
+        "files": {
+            "live_feature_row": live_path.exists(),
+            "latest_realtime_totals": realtime_path.exists(),
+            "latest_predisp_totals": predisp_path.exists(),
+            "latest_weather": weather_path.exists(),
+            "demand_history": demand_history_path.exists(),
+            "flex_assets": flex_assets_path.exists(),
+        },
+        "data_sources": {
+            "ieso_realtime": metadata.get("realtime_source", "unknown"),
+            "ieso_predispatch": metadata.get("predisp_source", "unknown"),
+            "weather": metadata.get("weather_source", "unknown"),
+            "reserve": metadata.get("reserve_source", "unknown"),
+            "generation": metadata.get("generation_source", "unknown"),
+            "lags": metadata.get("lag_source", "unknown"),
+            "model_training": "synthetic_training_data_currently",
+            "intervention_assets": "synthetic_with_Toronto_asset_categories_currently",
+        },
+        "honesty_note": (
+            "Live feature row uses real IESO demand, real IESO predispatch forecast, "
+            "and real weather where available. Reserve, generation, and some lag features "
+            "may still use fallbacks until full historical storage and GenOutputCapability are wired."
+        ),
+    }
 
 
 @app.get("/grid/live-mock")
@@ -78,18 +124,6 @@ def grid_live_mock() -> Dict[str, Any]:
 
 @app.get("/grid/live")
 def grid_live() -> Dict[str, Any]:
-    """
-    Returns the latest model-ready live feature row.
-
-    Current behavior:
-    - Reads data/processed/live_feature_row.json if available.
-    - If missing, builds it from latest processed IESO + fallback files.
-
-    Refresh flow before calling this endpoint:
-    python src/ingestion/fetch_realtime_totals.py
-    python src/ingestion/fetch_predisp_totals.py
-    python src/features/build_live_feature_row.py
-    """
     path = Path("data/processed/live_feature_row.json")
 
     if not path.exists():
@@ -103,28 +137,21 @@ def grid_live() -> Dict[str, Any]:
 
 @app.post("/grid/predict")
 def grid_predict(row: GridFeatureRow) -> Dict[str, Any]:
-    """
-    Predicts grid stress from a normalized grid/weather feature row.
-    """
     return predict_grid_stress(row.model_dump())
 
 
 @app.post("/flex/intervention")
 def flex_intervention(request: InterventionRequest) -> Dict[str, Any]:
-    """
-    Simulates a demand-response intervention and returns selected assets
-    plus the post-intervention stress score.
-    """
     return plan_intervention(
         target_reduction_mw=request.target_reduction_mw,
         stress_score_before=request.stress_score_before,
     )
 
+
 @app.get("/demo/run")
 def demo_run() -> Dict[str, Any]:
     live_row = grid_live()
 
-    # Remove non-model fields before prediction
     model_row = {
         key: value
         for key, value in live_row.items()
@@ -139,10 +166,12 @@ def demo_run() -> Dict[str, Any]:
     )
 
     return {
+        "mode": "live_current_grid",
         "live_row": live_row,
         "prediction": prediction,
         "intervention": intervention,
     }
+
 
 @app.get("/demo/stress")
 def demo_stress() -> Dict[str, Any]:
