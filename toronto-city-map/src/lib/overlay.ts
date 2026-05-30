@@ -59,6 +59,10 @@ export class OverlayState {
       note: e.note,
       severity: e.severity,
       kind: e.kind,
+      sourceId: e.sourceId,
+      hex: e.color,
+      startedAt: now,
+      ttlMs: ttl || undefined,
       expiresAt: ttl ? now + ttl : undefined,
     });
     this.version += 1;

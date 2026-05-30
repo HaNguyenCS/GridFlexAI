@@ -13,7 +13,9 @@ import type {
   ConnectionStatus,
   StreamEvent,
   StreamEventKind,
+  StreamSource,
 } from "./types";
+import { isMockSource } from "./sources";
 
 export interface StreamHandle {
   /** Unsubscribe and close the underlying transport. */
@@ -250,4 +252,98 @@ export function hexToRgba(
   const g = parseInt(full.slice(2, 4), 16);
   const b = parseInt(full.slice(4, 6), 16);
   return [r, g, b, alpha];
+}
+
+// ---------------------------------------------------------------------------
+// Multi-source manager
+// ---------------------------------------------------------------------------
+//
+// Each enabled StreamSource spawns its own StreamHandle. Events are
+// tagged with sourceId before being forwarded to the consumer. Disabling
+// a source closes its handle; toggling back on re-opens.
+
+export interface MultiStreamCallbacks {
+  onEvent: (e: StreamEvent) => void;
+  onSourceStatus: (sourceId: string, status: ConnectionStatus) => void;
+}
+
+export interface MultiStreamHandle {
+  /** Reconcile to the desired source list. Idempotent. */
+  setSources: (sources: StreamSource[]) => void;
+  /** Pause every active handle (mock simulators only — WS keeps streaming). */
+  pauseAll: () => void;
+  resumeAll: () => void;
+  /** Synthesize an event into the consumer (used by the manual "Inject" button). */
+  inject: (e: StreamEvent) => void;
+  /** Tear down every handle and release timers. */
+  close: () => void;
+}
+
+export function createMultiStream(
+  buildings: Building[],
+  cb: MultiStreamCallbacks
+): MultiStreamHandle {
+  const handles = new Map<string, StreamHandle>();
+  let paused = false;
+  const buildingsRef = buildings;
+  let closed = false;
+
+  const openSource = (s: StreamSource) => {
+    const handle = connectStream(
+      buildingsRef,
+      {
+        onStatus: (status) => cb.onSourceStatus(s.id, status),
+        onEvent: (e) =>
+          cb.onEvent({
+            ...e,
+            // Stamp the source id so consumers can group / filter.
+            sourceId: e.sourceId ?? s.id,
+            // Allow per-source colour to surface for events without one.
+            color: e.color ?? s.color,
+          }),
+      },
+      isMockSource(s) ? { forceMock: true } : { url: s.url }
+    );
+    if (paused) handle.pause();
+    handles.set(s.id, handle);
+  };
+
+  const closeSource = (id: string) => {
+    const h = handles.get(id);
+    if (!h) return;
+    h.close();
+    handles.delete(id);
+    cb.onSourceStatus(id, "idle");
+  };
+
+  return {
+    setSources(next: StreamSource[]) {
+      if (closed) return;
+      const wantIds = new Set(next.filter((s) => s.enabled).map((s) => s.id));
+      // Close removed/disabled.
+      for (const id of Array.from(handles.keys())) {
+        if (!wantIds.has(id)) closeSource(id);
+      }
+      // Open new enabled.
+      for (const s of next) {
+        if (s.enabled && !handles.has(s.id)) openSource(s);
+      }
+    },
+    pauseAll() {
+      paused = true;
+      for (const h of handles.values()) h.pause();
+    },
+    resumeAll() {
+      paused = false;
+      for (const h of handles.values()) h.resume();
+    },
+    inject(e: StreamEvent) {
+      cb.onEvent(e);
+    },
+    close() {
+      closed = true;
+      for (const h of handles.values()) h.close();
+      handles.clear();
+    },
+  };
 }

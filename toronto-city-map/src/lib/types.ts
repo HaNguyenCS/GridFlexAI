@@ -47,6 +47,8 @@ export interface StreamEvent {
   ttlMs?: number;
   /** Severity score 0..1 — drives outline weight + accent intensity. */
   severity?: number;
+  /** Stream source (plugin endpoint) that emitted this event. */
+  sourceId?: string;
 }
 
 /** Materialised state for a single building's overlay annotations. */
@@ -57,8 +59,35 @@ export interface BuildingOverlay {
   outlineWidth?: number;
   note?: string;
   expiresAt?: number;
+  startedAt?: number;
+  ttlMs?: number;
   severity?: number;
   kind: StreamEventKind;
+  sourceId?: string;
+  /** Hex colour string, retained for screen-space callouts. */
+  hex?: string;
+}
+
+/**
+ * A user-managed streaming endpoint registered through the Sources panel.
+ * Each enabled source spawns its own transport handle; events arriving
+ * through it are tagged with the source id so layers can be filtered
+ * by both kind and origin.
+ */
+export interface StreamSource {
+  id: string;
+  name: string;
+  /**
+   * Transport URL. Special values:
+   *   - "mock://built-in"       — in-process simulator (default)
+   *   - "ws://..." / "wss://..." — real WebSocket endpoint
+   */
+  url: string;
+  /** Brand colour shown in the legend dot and applied to events when emitted. */
+  color: string;
+  enabled: boolean;
+  /** Free-form tag for the user (e.g. "Sensors", "Permits"). */
+  tag?: string;
 }
 
 export type ConnectionStatus =

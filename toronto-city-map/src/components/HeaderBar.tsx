@@ -4,7 +4,7 @@
 // Right chunk is the connection status pill. Single line on desktop,
 // height capped per the impeccable / taste rules.
 
-import { Pulse, Broadcast, WifiSlash, WarningCircle } from "@phosphor-icons/react";
+import { Pulse, Broadcast, WifiSlash, WarningCircle, Plug } from "@phosphor-icons/react";
 import clsx from "clsx";
 import type { ConnectionStatus } from "../lib/types";
 
@@ -14,6 +14,9 @@ interface Props {
   buildingsLoaded: number;
   overlaysActive: number;
   eventsTotal: number;
+  sourcesEnabled: number;
+  sourcesTotal: number;
+  onOpenSources: () => void;
 }
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
@@ -31,6 +34,9 @@ export function HeaderBar({
   buildingsLoaded,
   overlaysActive,
   eventsTotal,
+  sourcesEnabled,
+  sourcesTotal,
+  onOpenSources,
 }: Props) {
   const live = status === "live";
   return (
@@ -55,6 +61,11 @@ export function HeaderBar({
           accent={overlaysActive > 0}
         />
         <Stat label="Events" value={eventsTotal.toLocaleString()} mono />
+        <SourcesTrigger
+          enabled={sourcesEnabled}
+          total={sourcesTotal}
+          onClick={onOpenSources}
+        />
         <StatusPill status={status} url={streamUrl} live={live} />
       </div>
     </header>
@@ -150,5 +161,39 @@ function BrandMark() {
         <circle cx="18" cy="4" r="1.5" fill="var(--color-accent)" />
       </svg>
     </div>
+  );
+}
+
+function SourcesTrigger({
+  enabled,
+  total,
+  onClick,
+}: {
+  enabled: number;
+  total: number;
+  onClick: () => void;
+}) {
+  const allOn = enabled > 0;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title="Manage stream sources"
+      className={clsx(
+        "flex h-9 items-center gap-2 rounded-full border px-3 text-[12px] backdrop-blur-md transition-colors active:translate-y-px",
+        allOn
+          ? "border-[color-mix(in_oklch,var(--color-accent)_38%,transparent)] bg-[color-mix(in_oklch,var(--color-accent)_8%,var(--color-ink-1))] text-[var(--color-accent)] hover:bg-[color-mix(in_oklch,var(--color-accent)_14%,var(--color-ink-1))]"
+          : "border-[var(--color-ink-3)] bg-[color-mix(in_oklch,var(--color-ink-1)_82%,transparent)] text-[var(--color-ink-7)] hover:text-[var(--color-ink-8)]"
+      )}
+    >
+      <Plug size={13} weight="bold" />
+      <span className="font-mono text-[10px] uppercase tracking-[0.18em]">
+        Sources
+      </span>
+      <span className="font-mono text-[11px] tabular-nums">
+        {enabled}
+        <span className="text-[var(--color-ink-5)]">/{total}</span>
+      </span>
+    </button>
   );
 }
