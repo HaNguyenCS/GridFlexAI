@@ -198,7 +198,7 @@ def train_model(df: pd.DataFrame) -> dict:
         "objective": "binary:logistic",
         "eval_metric": ["auc", "logloss"],
         "tree_method": "hist",
-        "device": "cpu",
+        "device": "cuda",
         "max_depth": 5,
         "eta": 0.05,
         "subsample": 0.85,
