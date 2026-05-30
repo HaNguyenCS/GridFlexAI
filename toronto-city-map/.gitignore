@@ -8,3 +8,4 @@ dist/
 *.tsbuildinfo
 bun.lock
 .qoder/
+server/data/

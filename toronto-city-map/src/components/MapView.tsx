@@ -20,7 +20,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Map, { type MapRef } from "react-map-gl/maplibre";
 import maplibregl from "maplibre-gl";
 import DeckGL from "@deck.gl/react";
-import { PolygonLayer } from "@deck.gl/layers";
+import { PolygonLayer, PathLayer } from "@deck.gl/layers";
 import { LightingEffect, AmbientLight, DirectionalLight } from "@deck.gl/core";
 import type { MapViewState, PickingInfo } from "@deck.gl/core";
 
@@ -34,6 +34,15 @@ import {
 import { DARK_STYLE_URL } from "../lib/mapStyle";
 import { AnnotationOverlays } from "./AnnotationOverlays";
 import { indexById } from "../lib/buildings";
+import { energyToColor, type BuildingEnergy } from "../lib/energy";
+import { type Ward } from "../lib/wards";
+import {
+  pickWardFill,
+  pickWardLineColor,
+  pickWardLineWidth,
+} from "../lib/wardOverlay";
+import type { WardGridColor } from "../lib/gridStreams";
+export type ColorMode = "height" | "energy";
 
 const INITIAL_VIEW: MapViewState = {
   longitude: -79.3832,
@@ -67,6 +76,18 @@ interface Props {
   enabledKinds: Set<StreamEventKind>;
   enabledSources: Set<string>;
   onFocusBuilding?: (id: string) => void;
+  /** Active fill colour mode. "height" is the historical default. */
+  colorMode: ColorMode;
+  /** Per-building energy estimates, keyed by Building.id. */
+  energyById: Map<string, BuildingEnergy> | null;
+  /** Toronto ward boundaries. */
+  wards: Ward[];
+  /** Whether to render ward boundaries on the map. */
+  showWards: boolean;
+  /** Global opacity multiplier for building fills (0–1). */
+  buildingOpacity: number;
+  /** Grid stream ward colour fills (RAG severity shades). */
+  wardGridColors?: Map<string, WardGridColor>;
 }
 
 export function MapView({
@@ -78,6 +99,12 @@ export function MapView({
   enabledKinds,
   enabledSources,
   onFocusBuilding,
+  colorMode,
+  energyById,
+  wards,
+  showWards,
+  buildingOpacity,
+  wardGridColors,
 }: Props) {
   const mapRef = useRef<MapRef | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -131,15 +158,49 @@ export function MapView({
   };
 
   const layers = useMemo(() => {
-    return [
+    const result: (PolygonLayer<Building> | PolygonLayer<Ward> | PathLayer<Ward>)[] = [];
+
+    // Ward fill layer — rendered BELOW buildings.
+    // When grid stream colours are present they override the default
+    // ward fill, painting each zone with its RAG severity shade.
+    if (showWards && wards.length > 0) {
+      const gridVersion = wardGridColors
+        ? Array.from(wardGridColors.values()).reduce((a, c) => a + c.expiresAt, 0)
+        : 0;
+      result.push(
+        new PolygonLayer<Ward>({
+          id: "toronto-wards-fill",
+          data: wards,
+          pickable: false,
+          stroked: false,
+          filled: true,
+          extruded: false,
+          getPolygon: (w) => (w.holes ? [w.contour, ...w.holes] : w.contour),
+          getFillColor: (w) => {
+            const gc = wardGridColors?.get(w.id);
+            if (gc) return gc.fill;
+            return pickWardFill(undefined);
+          },
+          updateTriggers: { getFillColor: [gridVersion] },
+        })
+      );
+    }
+
+    // Building layer
+    result.push(
       new PolygonLayer<Building>({
         id: "toronto-buildings",
         data: buildings,
-        // version-tagged so deck.gl invalidates its colour caches on each
-        // overlay mutation without rebuilding the geometry buffers.
         updateTriggers: {
-          getFillColor: [overlayVersion, enabledKinds, enabledSources],
-          getLineColor: [overlayVersion, hoverId, enabledKinds, enabledSources],
+          getFillColor: [
+            overlayVersion,
+            enabledKinds,
+            enabledSources,
+            colorMode,
+            energyById,
+            buildingOpacity,
+          ],
+          getLineColor: [overlayVersion, hoverId, enabledKinds, enabledSources, buildingOpacity],
           getLineWidth: [overlayVersion, hoverId, enabledKinds, enabledSources],
         },
         pickable: true,
@@ -150,8 +211,20 @@ export function MapView({
         getPolygon: (b) => (b.holes ? [b.contour, ...b.holes] : b.contour),
         getElevation: (b) => b.height,
         elevationScale: 1,
-        getFillColor: (b) =>
-          pickFill(b, isVisible(b.id) ? overlay.get(b.id) : undefined),
+        getFillColor: (b) => {
+          let rgba: [number, number, number, number];
+          if (isVisible(b.id)) {
+            const o = overlay.get(b.id);
+            if (o?.color) { rgba = o.color; }
+            else { rgba = pickFill(b, undefined); }
+          } else if (colorMode === "energy" && energyById) {
+            const energy = energyById.get(b.id);
+            rgba = energy ? energyToColor(energy.normalised) : pickFill(b, undefined);
+          } else {
+            rgba = pickFill(b, undefined);
+          }
+          return [rgba[0], rgba[1], rgba[2], Math.round(rgba[3] * buildingOpacity)] as [number, number, number, number];
+        },
         getLineColor: (b) =>
           pickLineColor(
             isVisible(b.id) ? overlay.get(b.id) : undefined,
@@ -177,8 +250,39 @@ export function MapView({
             onHoverBuilding?.(info.object ?? null);
           }
         },
-      }),
-    ];
+      })
+    );
+
+    // Ward outline layer — rendered ABOVE buildings for crisp boundaries.
+    // Grid stream severity also thickens and recolours the outline.
+    if (showWards && wards.length > 0) {
+      const gridVersion = wardGridColors
+        ? Array.from(wardGridColors.values()).reduce((a, c) => a + c.expiresAt, 0)
+        : 0;
+      result.push(
+        new PathLayer<Ward>({
+          id: "toronto-wards-outline",
+          data: wards,
+          pickable: false,
+          widthUnits: "pixels",
+          widthMinPixels: 1.6,
+          getPath: (w) => w.contour,
+          getColor: (w) => {
+            const gc = wardGridColors?.get(w.id);
+            if (gc) return gc.outline;
+            return pickWardLineColor(undefined);
+          },
+          getWidth: (w) => {
+            const gc = wardGridColors?.get(w.id);
+            if (gc) return 3.2;
+            return pickWardLineWidth(undefined);
+          },
+          updateTriggers: { getColor: [gridVersion], getWidth: [gridVersion] },
+        })
+      );
+    }
+
+    return result;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     buildings,
@@ -188,6 +292,12 @@ export function MapView({
     onHoverBuilding,
     enabledKinds,
     enabledSources,
+    colorMode,
+    energyById,
+    wards,
+    showWards,
+    buildingOpacity,
+    wardGridColors,
   ]);
 
   // Filter once for the screen-space callouts.
