@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="GridFlex AI", version="0.1.0")
 
-# Connected clients
+# Connected clients list for WebSocket
 clients: set[WebSocket] = set()
 
 
