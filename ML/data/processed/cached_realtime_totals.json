@@ -1,14 +1,14 @@
 {
   "source": "IESO RealtimeTotals",
-  "source_file": "PUB_RealtimeTotals_2026053015_v1.xml",
+  "source_file": "PUB_RealtimeTotals_2026053015_v4.xml",
   "timestamp": "2026-05-30T15:00:00",
-  "interval": 1,
-  "ontario_demand_mw": 13605.7,
-  "market_demand_mw": 13605.7,
+  "interval": 4,
+  "ontario_demand_mw": 13627.8,
+  "market_demand_mw": 13627.8,
   "scheduled_operating_reserve_mw": 0.0,
   "reserve_margin_ratio": 0.0,
   "available_market_quantities": [
     "ONTARIO DEMAND"
   ],
-  "ingested_at_utc": "2026-05-30T19:01:59.112071"
+  "ingested_at_utc": "2026-05-30T19:13:48.054970"
 }

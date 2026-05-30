@@ -3,7 +3,7 @@ import pandas as pd
 import xgboost as xgb
 from sklearn.metrics import roc_auc_score, precision_score, recall_score
 
-from features import prepare_features, FEATURE_COLUMNS
+from feature_engineering import prepare_features, FEATURE_COLUMNS
 
 
 TARGET = "stress_event_next_3h"
