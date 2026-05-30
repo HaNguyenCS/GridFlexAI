@@ -1,0 +1,52 @@
+{
+  "source": "GridFlex demo flexibility registry",
+  "assets": [
+    {
+      "asset_id": "BATTERY_POOL_001",
+      "asset_type": "Battery / Storage",
+      "zone": "Etobicoke",
+      "estimated_reduction_mw": 100,
+      "activation_minutes": 1,
+      "duration_minutes": 60,
+      "comfort_impact": "low",
+      "source_dataset": "synthetic_demo_pool",
+      "toronto_open_data_role": "future renewable/storage asset enrichment"
+    },
+    {
+      "asset_id": "EV_POOL_001",
+      "asset_type": "EV Charging Delay",
+      "zone": "North York",
+      "estimated_reduction_mw": 180,
+      "activation_minutes": 5,
+      "duration_minutes": 90,
+      "comfort_impact": "low",
+      "source_dataset": "synthetic_demo_pool",
+      "toronto_open_data_role": "future City EV charging station map enrichment"
+    },
+    {
+      "asset_id": "HVAC_POOL_001",
+      "asset_type": "City / Commercial HVAC",
+      "zone": "Downtown",
+      "estimated_reduction_mw": 250,
+      "activation_minutes": 10,
+      "duration_minutes": 120,
+      "comfort_impact": "medium",
+      "source_dataset": "synthetic_demo_pool",
+      "toronto_open_data_role": "future Annual Energy Consumption enrichment"
+    },
+    {
+      "asset_id": "THERMO_POOL_001",
+      "asset_type": "Residential Thermostat Cluster",
+      "zone": "Scarborough",
+      "estimated_reduction_mw": 120,
+      "activation_minutes": 10,
+      "duration_minutes": 120,
+      "comfort_impact": "medium",
+      "source_dataset": "synthetic_demo_pool",
+      "toronto_open_data_role": "future Apartment Building Registration enrichment"
+    }
+  ],
+  "total_available_mw": 650,
+  "built_at_utc": "2026-05-30T19:02:01.661764+00:00",
+  "honesty_note": "Current asset MW values are simulated for the hackathon demo. Asset categories are designed to map to Toronto Open Data datasets."
+}

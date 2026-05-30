@@ -1,0 +1,42 @@
+{
+  "file": "data/raw/ieso/demand/PUB_Demand_2026.csv",
+  "header_row": 3,
+  "columns": [
+    "Date",
+    "Hour",
+    "Market Demand",
+    "Ontario Demand"
+  ],
+  "sample_rows": [
+    {
+      "Date": "2026-01-01",
+      "Hour": 1,
+      "Market Demand": 19489,
+      "Ontario Demand": 16526
+    },
+    {
+      "Date": "2026-01-01",
+      "Hour": 2,
+      "Market Demand": 19317,
+      "Ontario Demand": 16374
+    },
+    {
+      "Date": "2026-01-01",
+      "Hour": 3,
+      "Market Demand": 19326,
+      "Ontario Demand": 16242
+    },
+    {
+      "Date": "2026-01-01",
+      "Hour": 4,
+      "Market Demand": 19070,
+      "Ontario Demand": 16155
+    },
+    {
+      "Date": "2026-01-01",
+      "Hour": 5,
+      "Market Demand": 19109,
+      "Ontario Demand": 16180
+    }
+  ]
+}
