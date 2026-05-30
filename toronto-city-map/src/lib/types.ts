@@ -49,6 +49,8 @@ export interface StreamEvent {
   severity?: number;
   /** Stream source (plugin endpoint) that emitted this event. */
   sourceId?: string;
+  /** Target type — "building" (default) or "ward". */
+  targetType?: "building" | "ward";
 }
 
 /** Materialised state for a single building's overlay annotations. */
@@ -97,3 +99,28 @@ export type ConnectionStatus =
   | "reconnecting"
   | "error"
   | "offline";
+
+// ── Grid streams ──────────────────────────────────────────────────────
+//
+// GridFlex-style severity streams that paint ward zones with RAG colours.
+// Each grid event targets a ward and carries a severity band that maps
+// to a red / orange / yellow / green shade.
+
+export type GridSeverity = "critical" | "high" | "moderate" | "normal";
+
+export interface GridStreamEvent {
+  /** ISO timestamp. */
+  ts: string;
+  /** Target ward id (e.g. "ward-3"). */
+  wardId: string;
+  /** Severity band. */
+  severity: GridSeverity;
+  /** Hex colour for the severity band. */
+  color: string;
+  /** Human-readable metric label. */
+  metric: string;
+  /** Numeric value 0–100. */
+  value: number;
+  /** TTL in ms before the zone paint fades. */
+  ttlMs: number;
+}

@@ -8,9 +8,10 @@
 // For an instant-loading demo we ship a curated procedural footprint
 // of the downtown core (Financial District / Entertainment District /
 // Waterfront) that resembles the real city block grid. The
-// `fetchTorontoBuildings()` function attempts a live fetch from the
-// CKAN datastore endpoint with a bounding-box subset; on failure it
-// returns the procedural set.
+// `fetchTorontoBuildings()` function fetches the published GeoJSON
+// resource, clips it to the central-Toronto bounding box for
+// memory-friendliness, and falls back to the procedural set on
+// network / parse failure.
 
 import type { Building, LngLat, Ring } from "./types";
 
@@ -19,6 +20,40 @@ const TORONTO_DOWNTOWN_CENTER: LngLat = [-79.3832, 43.6532]; // City Hall
 /** Toronto Open Data CKAN package endpoint (left here for reference / future hookup). */
 export const TORONTO_OPENDATA_PACKAGE_URL =
   "https://ckan0.cf.opendata.inter.prod-toronto.ca/api/3/action/package_show?id=topographic-mapping-building-outlines";
+
+/**
+ * Direct GeoJSON resource — published in EPSG:4326 (WGS84).
+ * The full file is several hundred MB; callers should clip via bbox.
+ */
+export const TORONTO_BUILDING_OUTLINES_URL =
+  "https://ckan0.cf.opendata.inter.prod-toronto.ca/dataset/09a930cc-2a52-49b2-866d-52ac7f769a73/resource/8364d47f-6a39-439d-8e9c-4ea1a7506e53/download/Building%20Outlines%20-%204326.geojson";
+
+/**
+ * Same-origin path served by the dev/preview server when
+ * `npm run prefetch` has populated `server/data/`. Tried first to
+ * dodge CORS on the upstream CKAN host.
+ */
+export const LOCAL_BUILDING_OUTLINES_URL = "/data/building-outlines-4326.geojson";
+
+/**
+ * Default bounding box covering central Toronto (Etobicoke ↔ East York,
+ * Lakeshore ↔ Yorkdale). Tight enough to keep parse + render under
+ * tens of thousands of polygons, generous enough that panning around
+ * downtown still finds geometry on every block.
+ */
+export const TORONTO_CENTRAL_BBOX = {
+  minLng: -79.48,
+  maxLng: -79.28,
+  minLat: 43.62,
+  maxLat: 43.72,
+} as const;
+
+export interface BBox {
+  minLng: number;
+  maxLng: number;
+  minLat: number;
+  maxLat: number;
+}
 
 /** Approx metres-per-degree at Toronto latitude for our procedural grid. */
 const M_PER_DEG_LAT = 111_320;
@@ -288,30 +323,311 @@ export function getProceduralToronto(): Building[] {
 }
 
 /**
- * Live fetcher (best-effort). Toronto's CKAN datastore exposes building
- * outlines as a paginated JSON endpoint. We pull only the downtown
- * bounding box. Callers should treat this as a slow path.
+ * Raw GeoJSON feature properties from the City of Toronto Open Data
+ * "Building Outlines" resource. Field availability varies between
+ * vintages of the publish — we treat every property as optional.
+ */
+interface BuildingFeatureProperties {
+  OBJECTID?: number;
+  STRUCTURE_ID?: number | string;
+  MAP_ID?: string;
+  BLDG_USE?: string;
+  STATUS?: string;
+  NAME?: string;
+  /** Some publishes embed metric heights — try every spelling. */
+  MAX_HEIGHT?: number;
+  MAX_HEIGHT_M?: number;
+  AVG_HEIGHT?: number;
+  AVG_HEIGHT_M?: number;
+  MIN_HEIGHT?: number;
+  MIN_HEIGHT_M?: number;
+  HEIGHT?: number;
+  HEIGHT_M?: number;
+  AREA?: number;
+  AREA_SQ_M?: number;
+  CAPTURE_DATE?: string;
+  [key: string]: unknown;
+}
+
+type BuildingFeature = {
+  type: "Feature";
+  properties: BuildingFeatureProperties;
+  geometry: {
+    type: "Polygon" | "MultiPolygon";
+    coordinates: number[][][] | number[][][][];
+  } | null;
+};
+
+/**
+ * Live fetcher. Pulls the published GeoJSON resource, clips features to
+ * the requested bbox, and parses each polygon into a `Building` ready
+ * for the deck.gl PolygonLayer.
  *
- * If the fetch fails (CORS, offline, schema drift) we return the
- * procedural dataset so the visual is never empty.
+ * Failures (network / CORS / parse) reject the returned promise so
+ * callers can render a proper error UI instead of silently swapping
+ * in the procedural placeholder.
  */
 export async function fetchTorontoBuildings(opts?: {
   signal?: AbortSignal;
+  bbox?: BBox;
 }): Promise<Building[]> {
-  try {
-    const res = await fetch(TORONTO_OPENDATA_PACKAGE_URL, {
-      signal: opts?.signal,
-    });
-    if (!res.ok) throw new Error(`OpenData package_show ${res.status}`);
-    // The package_show response lists resources; the building outline GeoJSON
-    // resource changes URL on each refresh. For the demo we don't follow
-    // through to the (multi-hundred-MB) GeoJSON download — we surface that
-    // we *can* reach the API, then return the curated set.
-    await res.json();
-    return getProceduralToronto();
-  } catch {
-    return getProceduralToronto();
+  const bbox = opts?.bbox ?? TORONTO_CENTRAL_BBOX;
+  // Try the same-origin prefetched copy first, then the live CKAN URL.
+  const candidates = [LOCAL_BUILDING_OUTLINES_URL, TORONTO_BUILDING_OUTLINES_URL];
+  let lastError: unknown = null;
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url, { signal: opts?.signal });
+      if (!res.ok) {
+        // 404 on the local path simply means prefetch hasn't run —
+        // silently fall through to the upstream URL.
+        lastError = new Error(`HTTP ${res.status} from ${url}`);
+        continue;
+      }
+      const geojson = (await res.json()) as {
+        type?: string;
+        features?: BuildingFeature[];
+      };
+      if (!geojson || geojson.type !== "FeatureCollection" || !Array.isArray(geojson.features)) {
+        throw new Error("Invalid GeoJSON: expected FeatureCollection");
+      }
+      return parseBuildingsGeoJSON(geojson.features, bbox);
+    } catch (err) {
+      if ((err as { name?: string })?.name === "AbortError") throw err;
+      lastError = err;
+      // try the next URL in the candidate list
+    }
   }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Unable to fetch Toronto building outlines.");
+}
+
+/**
+ * Parse a Building Outlines GeoJSON FeatureCollection into the flat
+ * `Building` records expected by the renderer. Features outside the
+ * bbox are skipped (their bounding box can't intersect the clip).
+ * MultiPolygon features explode into one Building per ring.
+ */
+function parseBuildingsGeoJSON(
+  features: BuildingFeature[],
+  bbox: BBox
+): Building[] {
+  const out: Building[] = [];
+  for (let f = 0; f < features.length; f++) {
+    const feature = features[f];
+    if (!feature || !feature.geometry) continue;
+    const props = feature.properties ?? {};
+    const baseId = stableFeatureId(props, f);
+    const category = normalizeCategory(props.BLDG_USE);
+    const label =
+      typeof props.NAME === "string" && props.NAME.trim().length > 0
+        ? props.NAME.trim()
+        : undefined;
+    const declaredHeight = pickDeclaredHeight(props);
+    const declaredArea =
+      typeof props.AREA_SQ_M === "number"
+        ? props.AREA_SQ_M
+        : typeof props.AREA === "number"
+        ? props.AREA
+        : undefined;
+
+    const polygons = extractPolygonRings(feature.geometry);
+    for (let p = 0; p < polygons.length; p++) {
+      const rings = polygons[p];
+      const outer = rings[0];
+      if (!outer || outer.length < 4) continue;
+      if (!ringIntersectsBBox(outer, bbox)) continue;
+      const contour = closeRing(outer);
+      const holes = rings.length > 1 ? rings.slice(1).map(closeRing) : undefined;
+      const id = polygons.length > 1 ? `${baseId}-${p.toString(36)}` : baseId;
+      const height =
+        declaredHeight ??
+        estimateHeight(contour, declaredArea, id);
+      out.push({
+        id,
+        contour,
+        holes,
+        height,
+        category,
+        label,
+      });
+    }
+  }
+  return out;
+}
+
+/** Pull a stable id from the feature properties (falls back to the row index). */
+function stableFeatureId(
+  props: BuildingFeatureProperties,
+  idx: number
+): string {
+  if (typeof props.STRUCTURE_ID === "number" || typeof props.STRUCTURE_ID === "string") {
+    return `bld-${props.STRUCTURE_ID}`;
+  }
+  if (typeof props.OBJECTID === "number") {
+    return `bld-${props.OBJECTID}`;
+  }
+  if (typeof props.MAP_ID === "string" && props.MAP_ID.length > 0) {
+    return `bld-${props.MAP_ID}-${idx.toString(36)}`;
+  }
+  return `bld-${idx.toString(36)}`;
+}
+
+/** Try every height field spelling published over the years. */
+function pickDeclaredHeight(
+  props: BuildingFeatureProperties
+): number | undefined {
+  const candidates: Array<number | undefined> = [
+    props.MAX_HEIGHT_M,
+    props.MAX_HEIGHT,
+    props.HEIGHT_M,
+    props.HEIGHT,
+    props.AVG_HEIGHT_M,
+    props.AVG_HEIGHT,
+  ];
+  for (const v of candidates) {
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) return v;
+  }
+  return undefined;
+}
+
+/** Normalise BLDG_USE codes into the limited palette we render. */
+function normalizeCategory(use: string | undefined): string | undefined {
+  if (!use || typeof use !== "string") return undefined;
+  const u = use.toLowerCase();
+  if (u.includes("resid")) return "residential";
+  if (u.includes("comm") || u.includes("office") || u.includes("retail"))
+    return "commercial";
+  if (
+    u.includes("civic") ||
+    u.includes("gov") ||
+    u.includes("school") ||
+    u.includes("hospital") ||
+    u.includes("insti") ||
+    u.includes("public")
+  )
+    return "civic";
+  if (u.includes("indust") || u.includes("warehouse")) return "industrial";
+  return undefined;
+}
+
+/**
+ * Bounding-box check on a ring — uses an axis-aligned overlap test
+ * against the clipping bbox. Cheap and rejection-friendly: most of the
+ * city falls outside any one bbox so we exit on the first ring corner
+ * that crosses the threshold.
+ */
+function ringIntersectsBBox(ring: number[][], bbox: BBox): boolean {
+  let minLng = Infinity;
+  let maxLng = -Infinity;
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  for (let i = 0; i < ring.length; i++) {
+    const pt = ring[i];
+    if (!pt || pt.length < 2) continue;
+    const lng = pt[0];
+    const lat = pt[1];
+    if (lng < minLng) minLng = lng;
+    if (lng > maxLng) maxLng = lng;
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+  }
+  if (!Number.isFinite(minLng)) return false;
+  if (maxLng < bbox.minLng || minLng > bbox.maxLng) return false;
+  if (maxLat < bbox.minLat || minLat > bbox.maxLat) return false;
+  return true;
+}
+
+/** Extract every polygon (outer + holes) from a Polygon | MultiPolygon. */
+function extractPolygonRings(
+  geom: NonNullable<BuildingFeature["geometry"]>
+): number[][][][] {
+  if (geom.type === "Polygon") {
+    return [geom.coordinates as number[][][]];
+  }
+  if (geom.type === "MultiPolygon") {
+    return geom.coordinates as number[][][][];
+  }
+  return [];
+}
+
+/** Ensure the ring is closed (first point repeated at the end). */
+function closeRing(ring: number[][]): Ring {
+  const out: Ring = ring.map(([lng, lat]) => [lng, lat] as LngLat);
+  if (out.length > 0) {
+    const first = out[0];
+    const last = out[out.length - 1];
+    if (first[0] !== last[0] || first[1] !== last[1]) {
+      out.push([first[0], first[1]]);
+    }
+  }
+  return out;
+}
+
+/**
+ * Deterministic height estimator for outlines that don't ship a
+ * MAX_HEIGHT property. Combines:
+ *   - footprint area (bigger plates → taller cores in the financial dist),
+ *   - distance from City Hall (heights drop off toward the lake / suburbs),
+ *   - a per-id hash for stable jitter so the skyline isn't a flat plate.
+ */
+function estimateHeight(
+  contour: Ring,
+  declaredArea: number | undefined,
+  id: string
+): number {
+  const [cLng, cLat] = ringCentroid(contour);
+  const dLng = (cLng - TORONTO_DOWNTOWN_CENTER[0]) * M_PER_DEG_LNG;
+  const dLat = (cLat - TORONTO_DOWNTOWN_CENTER[1]) * M_PER_DEG_LAT;
+  const distM = Math.hypot(dLng, dLat);
+  const distNorm = Math.min(1, distM / 4500);
+  const areaSqM =
+    typeof declaredArea === "number" && declaredArea > 0
+      ? declaredArea
+      : approxRingAreaSqMeters(contour);
+  const areaScore = Math.min(1, Math.log10(Math.max(50, areaSqM)) / 4); // 0..1
+  const base = 14 + (1 - distNorm) * 165 + areaScore * 70;
+  const jitter = (hashUnit(id) - 0.4) * base * 0.55;
+  return Math.max(8, base + jitter);
+}
+
+function ringCentroid(ring: Ring): LngLat {
+  let lng = 0;
+  let lat = 0;
+  const n = ring.length - 1; // last point repeats first
+  if (n <= 0) return TORONTO_DOWNTOWN_CENTER;
+  for (let i = 0; i < n; i++) {
+    lng += ring[i][0];
+    lat += ring[i][1];
+  }
+  return [lng / n, lat / n];
+}
+
+function approxRingAreaSqMeters(ring: Ring): number {
+  // Shoelace in metres after equirectangular projection through the centroid.
+  if (ring.length < 4) return 0;
+  const [cLng, cLat] = ringCentroid(ring);
+  const cosLat = Math.cos((cLat * Math.PI) / 180);
+  let sum = 0;
+  for (let i = 0, j = ring.length - 2; i < ring.length - 1; j = i++) {
+    const xi = (ring[i][0] - cLng) * 111_320 * cosLat;
+    const yi = (ring[i][1] - cLat) * 111_320;
+    const xj = (ring[j][0] - cLng) * 111_320 * cosLat;
+    const yj = (ring[j][1] - cLat) * 111_320;
+    sum += xj * yi - xi * yj;
+  }
+  return Math.abs(sum) / 2;
+}
+
+/** Cheap string-hash → [0,1) for stable per-id jitter. */
+function hashUnit(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 1000) / 1000;
 }
 
 /** Index buildings by id for O(1) lookup during stream updates. */
