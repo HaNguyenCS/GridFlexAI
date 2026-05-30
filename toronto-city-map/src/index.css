@@ -1,0 +1,212 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans:
+    "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+
+  --color-ink-0: oklch(0.16 0.01 250);
+  --color-ink-1: oklch(0.19 0.012 248);
+  --color-ink-2: oklch(0.23 0.013 246);
+  --color-ink-3: oklch(0.28 0.014 244);
+  --color-ink-4: oklch(0.36 0.016 240);
+  --color-ink-5: oklch(0.5 0.018 238);
+  --color-ink-6: oklch(0.65 0.014 236);
+  --color-ink-7: oklch(0.8 0.01 234);
+  --color-ink-8: oklch(0.92 0.008 232);
+
+  --color-accent: oklch(0.84 0.16 188);
+  --color-accent-soft: oklch(0.55 0.13 188);
+  --color-accent-deep: oklch(0.36 0.1 192);
+
+  --color-warn: oklch(0.78 0.16 70);
+  --color-alert: oklch(0.7 0.2 25);
+  --color-ok: oklch(0.78 0.16 158);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: var(--color-ink-0);
+  color: var(--color-ink-7);
+  font-family: var(--font-sans);
+  font-feature-settings:
+    "ss01" on,
+    "cv11" on;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: color-mix(in oklch, var(--color-accent) 35%, transparent);
+  color: var(--color-ink-8);
+}
+
+/* MapLibre overrides — strip default chrome, we draw our own */
+.maplibregl-ctrl-attrib,
+.maplibregl-ctrl-bottom-right,
+.maplibregl-ctrl-bottom-left {
+  display: none !important;
+}
+.maplibregl-canvas:focus {
+  outline: none;
+}
+
+/* Subtle scrollbar in the dark scene */
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-ink-3);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-4);
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--color-accent) 70%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in oklch, var(--color-accent) 0%, transparent);
+  }
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.event-row-enter {
+  animation: slide-in 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.live-dot {
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+
+/* ---------------------------------------------------------------------------
+   Sources panel + dynamic legend
+   --------------------------------------------------------------------------- */
+
+.source-row-enter {
+  animation: slide-in 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.layer-row-enter {
+  animation: slide-in 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes source-pulse {
+  0% {
+    transform: scale(0.55);
+    opacity: 0.85;
+  }
+  70% {
+    transform: scale(1.45);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.45);
+    opacity: 0;
+  }
+}
+
+.source-pulse {
+  animation: source-pulse 1.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+/* ---------------------------------------------------------------------------
+   Annotation overlays — floating callouts + arrows
+   --------------------------------------------------------------------------- */
+
+.callout-chip {
+  /* The outer wrapper carries the projected translate. The inner div
+     handles the entry transition, so motion never touches `top/left`. */
+  will-change: transform;
+}
+
+.callout-chip .callout-chip-inner {
+  opacity: 0;
+  transform: translateY(8px) scale(0.92);
+  transition:
+    opacity 380ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 380ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.callout-chip[data-mounted="true"] .callout-chip-inner {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+@keyframes callout-arrow-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.callout-arrow-stroke {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: callout-arrow-draw 520ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes callout-anchor-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.65;
+  }
+  70% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+
+.callout-anchor-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: callout-anchor-pulse 2.2s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.callout-anchor-dot {
+  filter: drop-shadow(0 0 4px var(--callout-color, #7ad4ff));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .callout-chip .callout-chip-inner,
+  .callout-arrow-stroke,
+  .callout-anchor-ring,
+  .source-pulse,
+  .live-dot,
+  .event-row-enter,
+  .source-row-enter,
+  .layer-row-enter {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+    stroke-dashoffset: 0 !important;
+  }
+}
