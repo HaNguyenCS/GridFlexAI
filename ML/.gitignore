@@ -10,12 +10,6 @@ wheels/
 *.whl
 .cache/
 
-# Data files
-data/raw/
-data/processed/
-*.csv
-*.parquet
-
 # Model artifacts
 artifacts/
 *.pkl

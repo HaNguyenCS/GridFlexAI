@@ -1,0 +1,2 @@
+timestamp,source_file,interval,ontario_demand_mw,market_demand_mw,scheduled_operating_reserve_mw,reserve_margin_ratio
+2026-05-30T15:00:00,PUB_RealtimeTotals_2026053015_v1.xml,1,13605.7,13605.7,0.0,0.0
