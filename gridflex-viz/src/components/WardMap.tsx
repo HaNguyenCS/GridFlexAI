@@ -4,6 +4,7 @@ import type { MapLayerMouseEvent, MapRef } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 import { statusFillColor } from "../lib/format";
+import type { KeplerFlow } from "../lib/simulationTypes";
 import type { ZoneMetrics } from "../lib/types";
 
 const INITIAL_VIEW = {
@@ -44,9 +45,10 @@ interface Props {
   zones: Map<string, ZoneMetrics>;
   selectedZone: string | null;
   onSelectZone: (zoneId: string | null) => void;
+  flows?: KeplerFlow[];
 }
 
-export function WardMap({ geojsonUrl, zones, selectedZone, onSelectZone }: Props) {
+export function WardMap({ geojsonUrl, zones, selectedZone, onSelectZone, flows = [] }: Props) {
   const [baseGeoJson, setBaseGeoJson] = useState<GeoJSON.FeatureCollection | null>(
     null
   );
@@ -79,6 +81,27 @@ export function WardMap({ geojsonUrl, zones, selectedZone, onSelectZone }: Props
       }),
     } satisfies GeoJSON.FeatureCollection;
   }, [baseGeoJson, zones]);
+
+  const flowGeoJson = useMemo((): GeoJSON.FeatureCollection => {
+    return {
+      type: "FeatureCollection",
+      features: flows.map((flow) => ({
+        type: "Feature",
+        properties: {
+          flow_id: flow.flow_id,
+          flow_mw: flow.flow_mw,
+          risk_level: flow.risk_level,
+        },
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [flow.source_lng, flow.source_lat],
+            [flow.target_lng, flow.target_lat],
+          ],
+        },
+      })),
+    };
+  }, [flows]);
 
   const onClick = useCallback(
     (event: MapLayerMouseEvent) => {
@@ -177,6 +200,28 @@ export function WardMap({ geojsonUrl, zones, selectedZone, onSelectZone }: Props
           }}
         />
       </Source>
+      {flows.length > 0 && (
+        <Source id="flex-flows" type="geojson" data={flowGeoJson}>
+          <Layer
+            id="flex-flow-lines"
+            type="line"
+            paint={{
+              "line-color": "#38bdf8",
+              "line-width": [
+                "interpolate",
+                ["linear"],
+                ["get", "flow_mw"],
+                0,
+                1,
+                200,
+                6,
+              ],
+              "line-opacity": 0.75,
+            }}
+            layout={{ "line-cap": "round" }}
+          />
+        </Source>
+      )}
     </Map>
   );
 }

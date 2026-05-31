@@ -1,16 +1,14 @@
 """
-Simulate ward-level hydro demand and route supply through a pluggable agent.
+Ward-level grid streams driven by IESO historical Ontario demand replay.
 
-Demand is simulated each tick. Supply (capacity trades + grid MW) is decided
-by a SupplyAgent — swap in a LangGraph agent later via set_supply_agent().
+Demand is read from ML/data/processed/historical_demand.csv, scaled to Toronto,
+split across wards, and streamed tick-by-tick. Supply is decided by a pluggable
+SupplyAgent — swap in a LangGraph agent later via set_supply_agent().
 """
 
 from __future__ import annotations
 
 import json
-import math
-import random
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,34 +21,51 @@ from backend.agents.supply_agent import (
 )
 from backend.config import (
     CAPACITY_TRANSFER_PRICE_PER_MW,
+    HISTORICAL_PLAYBACK_START_INDEX,
+    HISTORICAL_SPIKE_THRESHOLD,
     OVER_CAPACITY_ISSUE_SEC,
     OVER_CAPACITY_WARNING_SEC,
-    SPIKE_CITY_MULTIPLIER,
-    SPIKE_CITY_START_PROB,
-    SPIKE_DURATION_TICKS,
-    SPIKE_MULTIPLIER,
-    SPIKE_START_PROB,
-    SPIKE_ZONE_COUNT,
+    ROLLING_BASELINE_HOURS,
     STREAM_INTERVAL_SEC,
+    TORONTO_BASE_DEMAND_MW,
 )
+from backend.ingestion.historical_demand import HistoricalDemandPlayer
 from backend.ingestion.zone_capacity import ZoneCapacityState, ZoneCapacityTracker
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_REGISTRY_PATH = REPO_ROOT / "ML" / "data" / "processed" / "ward_zone_registry.json"
 
-TORONTO_BASE_DEMAND_MW = 5_200
 DEFAULT_SUPPLY_BUDGET = 4_500_000.0
 
 
-@dataclass(frozen=True)
 class WardZoneProfile:
-    zone_id: str
-    ward_number: str
-    ward_name: str
-    load_share_pct: float
-    capacity_mw: float
-    baseline_supply_mw: float
-    supply_cost_per_mw: float
+    __slots__ = (
+        "zone_id",
+        "ward_number",
+        "ward_name",
+        "load_share_pct",
+        "capacity_mw",
+        "baseline_supply_mw",
+        "supply_cost_per_mw",
+    )
+
+    def __init__(
+        self,
+        zone_id: str,
+        ward_number: str,
+        ward_name: str,
+        load_share_pct: float,
+        capacity_mw: float,
+        baseline_supply_mw: float,
+        supply_cost_per_mw: float,
+    ) -> None:
+        self.zone_id = zone_id
+        self.ward_number = ward_number
+        self.ward_name = ward_name
+        self.load_share_pct = load_share_pct
+        self.capacity_mw = capacity_mw
+        self.baseline_supply_mw = baseline_supply_mw
+        self.supply_cost_per_mw = supply_cost_per_mw
 
 
 def load_ward_profiles(path: Path = DEFAULT_REGISTRY_PATH) -> list[WardZoneProfile]:
@@ -85,122 +100,39 @@ def load_ward_profiles(path: Path = DEFAULT_REGISTRY_PATH) -> list[WardZoneProfi
     return profiles
 
 
-def _hourly_demand_multiplier(hour: int) -> float:
-    return 0.82 + 0.18 * math.sin((hour - 8) / 24 * 2 * math.pi)
-
-
-@dataclass
-class ActiveSpike:
-    zone_id: str
-    multiplier: float
-    ticks_remaining: int
-    spike_type: str  # "local" | "city"
-
-
-@dataclass
-class DemandSpikeEngine:
-    """Random demand spikes layered on the baseline random walk."""
-
-    rng: random.Random
-    start_prob: float = SPIKE_START_PROB
-    city_start_prob: float = SPIKE_CITY_START_PROB
-    zone_count_range: tuple[int, int] = SPIKE_ZONE_COUNT
-    multiplier_range: tuple[float, float] = SPIKE_MULTIPLIER
-    city_multiplier_range: tuple[float, float] = SPIKE_CITY_MULTIPLIER
-    duration_range: tuple[int, int] = SPIKE_DURATION_TICKS
-    active: dict[str, ActiveSpike] = field(default_factory=dict)
-    city_multiplier: float = 1.0
-    city_ticks_remaining: int = 0
-
-    def tick(self, zone_ids: list[str]) -> None:
-        for zone_id in list(self.active.keys()):
-            self.active[zone_id].ticks_remaining -= 1
-            if self.active[zone_id].ticks_remaining <= 0:
-                del self.active[zone_id]
-
-        if self.city_ticks_remaining > 0:
-            self.city_ticks_remaining -= 1
-            if self.city_ticks_remaining <= 0:
-                self.city_multiplier = 1.0
-
-        if self.rng.random() < self.city_start_prob:
-            self.city_multiplier = self.rng.uniform(*self.city_multiplier_range)
-            self.city_ticks_remaining = self.rng.randint(*self.duration_range)
-
-        if self.rng.random() < self.start_prob:
-            count = self.rng.randint(*self.zone_count_range)
-            targets = self.rng.sample(zone_ids, k=min(count, len(zone_ids)))
-            for zone_id in targets:
-                self.active[zone_id] = ActiveSpike(
-                    zone_id=zone_id,
-                    multiplier=self.rng.uniform(*self.multiplier_range),
-                    ticks_remaining=self.rng.randint(*self.duration_range),
-                    spike_type="local",
-                )
-
-    def multiplier_for(self, zone_id: str) -> tuple[float, ActiveSpike | None]:
-        local = self.active.get(zone_id)
-        mult = self.city_multiplier
-        if local:
-            mult *= local.multiplier
-        if mult <= 1.001:
-            return 1.0, local
-        return round(mult, 4), local
-
-    def active_events(self) -> list[dict]:
-        events: list[dict] = []
-        if self.city_ticks_remaining > 0:
-            events.append(
-                {
-                    "scope": "city",
-                    "multiplier": round(self.city_multiplier, 4),
-                    "ticks_remaining": self.city_ticks_remaining,
-                    "spike_type": "city",
-                }
-            )
-        for spike in self.active.values():
-            events.append(
-                {
-                    "scope": spike.zone_id,
-                    "zone_id": spike.zone_id,
-                    "multiplier": round(spike.multiplier, 4),
-                    "ticks_remaining": spike.ticks_remaining,
-                    "spike_type": spike.spike_type,
-                }
-            )
-        return events
-
-
 class WardStreamSimulator:
     def __init__(
         self,
         profiles: list[WardZoneProfile] | None = None,
         *,
-        seed: int = 42,
-        base_demand_mw: float = TORONTO_BASE_DEMAND_MW,
         supply_budget: float = DEFAULT_SUPPLY_BUDGET,
         transfer_price_per_mw: float = CAPACITY_TRANSFER_PRICE_PER_MW,
         tick_sec: float = STREAM_INTERVAL_SEC,
         warning_sec: float = OVER_CAPACITY_WARNING_SEC,
         issue_sec: float = OVER_CAPACITY_ISSUE_SEC,
         supply_agent: SupplyAgent | None = None,
+        playback_start_index: int = HISTORICAL_PLAYBACK_START_INDEX,
     ) -> None:
         self.profiles = profiles or load_ward_profiles()
-        self.base_demand_mw = base_demand_mw
         self.supply_budget = supply_budget
         self.transfer_price_per_mw = transfer_price_per_mw
-        self._rng = random.Random(seed)
+        self._tick_sec = tick_sec
         self._capacity_tracker = ZoneCapacityTracker(
             tick_sec=tick_sec,
             warning_sec=warning_sec,
             issue_sec=issue_sec,
         )
         self._profile_by_id = {profile.zone_id: profile for profile in self.profiles}
-        self._last_demands: dict[str, float] = {}
-        self._baseline_demands: dict[str, float] = {}
-        self._spike_engine = DemandSpikeEngine(rng=self._rng)
+        self._history = HistoricalDemandPlayer(
+            self.profiles,
+            start_hour_index=playback_start_index,
+        )
         self._supply_agent = supply_agent or DefaultCapacityAgent()
         self._last_decision: SupplyDecision | None = None
+        self._baseline_demands: dict[str, float] = {}
+
+    def sim_clock(self) -> dict:
+        return self._history.sim_clock(tick_sec=self._tick_sec)
 
     @property
     def supply_agent(self) -> SupplyAgent:
@@ -210,41 +142,15 @@ class WardStreamSimulator:
         self._supply_agent = agent
 
     def simulate_demands(self, at: datetime | None = None) -> dict[str, float]:
-        now = at or datetime.now(timezone.utc)
-        daily = _hourly_demand_multiplier(now.hour)
-        city_target = self.base_demand_mw * daily
-
-        if not self._last_demands:
-            city_demand = city_target * self._rng.uniform(0.98, 1.02)
-            demands: dict[str, float] = {}
-            for profile in self.profiles:
-                share = profile.load_share_pct / 100.0
-                zone_noise = self._rng.uniform(0.96, 1.04)
-                demands[profile.zone_id] = round(city_demand * share * zone_noise, 3)
-            self._last_demands = demands
-            self._baseline_demands = dict(demands)
-            return demands
-
-        city_demand = sum(self._last_demands.values()) * self._rng.uniform(0.985, 1.015)
-        city_demand += (city_target - city_demand) * 0.15
-        scale = city_demand / max(sum(self._last_demands.values()), 1.0)
-
-        demands = {}
-        for profile in self.profiles:
-            zone_id = profile.zone_id
-            drift = self._rng.uniform(0.992, 1.008)
-            demands[zone_id] = round(self._last_demands[zone_id] * scale * drift, 3)
-
-        self._baseline_demands = dict(demands)
-        self._spike_engine.tick([profile.zone_id for profile in self.profiles])
+        demands: dict[str, float] = {}
+        baselines: dict[str, float] = {}
 
         for profile in self.profiles:
-            zone_id = profile.zone_id
-            mult, _ = self._spike_engine.multiplier_for(zone_id)
-            if mult > 1.0:
-                demands[zone_id] = round(demands[zone_id] * mult, 3)
+            demand, baseline, _mult = self._history.ward_reading(profile.zone_id)
+            demands[profile.zone_id] = demand
+            baselines[profile.zone_id] = baseline
 
-        self._last_demands = demands
+        self._baseline_demands = baselines
         return demands
 
     def evaluate_capacity(
@@ -297,6 +203,7 @@ class WardStreamSimulator:
     ) -> tuple[dict, dict, dict, dict, SupplyDecision, list[ZoneCapacityState]]:
         now = at or datetime.now(timezone.utc)
         demands = self.simulate_demands(now)
+        zone_ids = [profile.zone_id for profile in self.profiles]
 
         decision = self.run_supply_agent(demands, at=now, active_issues=[])
 
@@ -316,7 +223,7 @@ class WardStreamSimulator:
             zone_id = profile.zone_id
             demand_mw = demands[zone_id]
             baseline_mw = self._baseline_demands.get(zone_id, demand_mw)
-            spike_mult, _ = self._spike_engine.multiplier_for(zone_id)
+            _, _, spike_mult = self._history.ward_reading(zone_id)
             capacity_state = capacity_by_zone[zone_id]
             grid_row = grid_by_zone[zone_id]
             effective = effective_capacity[zone_id]
@@ -331,7 +238,7 @@ class WardStreamSimulator:
                     "zone_id": zone_id,
                     "demand": demand_mw,
                     "baseline_demand": baseline_mw,
-                    "spike_active": spike_mult > 1.0,
+                    "spike_active": spike_mult >= HISTORICAL_SPIKE_THRESHOLD,
                     "spike_multiplier": spike_mult,
                     "owned_capacity": profile.capacity_mw,
                     "effective_capacity": effective,
@@ -361,18 +268,22 @@ class WardStreamSimulator:
 
         issues = self._capacity_tracker.active_issues(capacity_states)
         ts = now.isoformat()
+        sim = self.sim_clock()
+        active_spikes = self._history.active_spike_events(zone_ids)
 
         demand_frame = {
             "stream": "demand",
             "ts": ts,
             "zone_count": len(demand_readings),
-            "active_spikes": self._spike_engine.active_events(),
+            "active_spikes": active_spikes,
+            "sim": sim,
             "readings": demand_readings,
         }
         supply_frame = {
             "stream": "supply",
             "ts": ts,
             "zone_count": len(supply_readings),
+            "sim": sim,
             "agent": decision.agent,
             "agent_note": decision.note,
             "budget": grid.budget,
@@ -387,6 +298,7 @@ class WardStreamSimulator:
         trades_frame = {
             "stream": "trades",
             "ts": ts,
+            "sim": sim,
             "agent": decision.agent,
             "trade_count": len(decision.trades),
             "total_traded_mw": market.total_traded_mw,
@@ -405,6 +317,7 @@ class WardStreamSimulator:
         issues_frame = {
             "stream": "issues",
             "ts": ts,
+            "sim": sim,
             "issue_count": sum(1 for item in issues if item.status == "issue"),
             "warning_count": sum(1 for item in issues if item.status == "warning"),
             "issues": [
@@ -420,6 +333,7 @@ class WardStreamSimulator:
                 for item in issues
             ],
         }
+        self._history.advance()
         return (
             demand_frame,
             supply_frame,
@@ -434,15 +348,18 @@ class WardStreamSimulator:
             "zone_count": len(self.profiles),
             "zone_ids": [profile.zone_id for profile in self.profiles],
             "supply_agent": self._supply_agent.name,
+            "demand_source": {
+                "type": "historical_replay",
+                "path": self._history.historical_path,
+                "range_start": self._history.historical_start,
+                "range_end": self._history.historical_end,
+                "spike_threshold": HISTORICAL_SPIKE_THRESHOLD,
+                "rolling_baseline_hours": ROLLING_BASELINE_HOURS,
+            },
             "rules": {
                 "over_capacity_warning_sec": OVER_CAPACITY_WARNING_SEC,
                 "over_capacity_issue_sec": OVER_CAPACITY_ISSUE_SEC,
                 "tick_sec": STREAM_INTERVAL_SEC,
-                "capacity_transfer_price_per_mw": self.transfer_price_per_mw,
-                "spike_start_prob": SPIKE_START_PROB,
-                "spike_city_start_prob": SPIKE_CITY_START_PROB,
-                "spike_multiplier": list(SPIKE_MULTIPLIER),
-                "spike_duration_ticks": list(SPIKE_DURATION_TICKS),
             },
             "zones": [
                 {

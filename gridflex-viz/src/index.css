@@ -45,9 +45,26 @@ body {
   grid-template-columns: minmax(0, 1fr) 340px;
 }
 
+.main-column {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex-direction: column;
+}
+
 .map-panel {
   position: relative;
+  min-height: 0;
   min-width: 0;
+  flex: 1;
+}
+
+.chart-panel {
+  min-height: 220px;
+  max-height: 260px;
+  flex-shrink: 0;
+  border-top: 1px solid rgb(255 255 255 / 0.08);
+  border-radius: 0;
 }
 
 .sidebar {
@@ -158,6 +175,26 @@ body {
   width: 0.65rem;
   height: 0.65rem;
   border-radius: 999px;
+}
+
+.ward-mini {
+  width: 100%;
+  border: 1px solid rgb(255 255 255 / 0.06);
+  border-radius: 0.75rem;
+  background: rgb(255 255 255 / 0.02);
+  padding: 0.5rem 0.65rem;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.ward-mini:hover {
+  border-color: rgb(255 255 255 / 0.14);
+  background: rgb(255 255 255 / 0.04);
+}
+
+.ward-mini-active {
+  border-color: rgb(99 102 241 / 0.45);
+  background: rgb(99 102 241 / 0.08);
 }
 
 @media (max-width: 960px) {

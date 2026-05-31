@@ -30,8 +30,24 @@ export interface ActiveSpike {
   scope: string;
   zone_id?: string;
   multiplier: number;
+  peak_multiplier?: number;
+  phase?: "ramp_up" | "hold" | "ramp_down";
   ticks_remaining: number;
   spike_type: string;
+}
+
+export interface SimClock {
+  sim_tick: number;
+  sim_day: number;
+  sim_hour: number;
+  sim_minute: number;
+  sim_time: string;
+  historical_date?: string;
+  historical_timestamp?: string;
+  demand_source?: string;
+  sim_minutes_per_tick: number;
+  tick_sec: number;
+  time_compression: number;
 }
 
 export interface Issue {
@@ -58,4 +74,15 @@ export interface StreamConnection {
   supply: "connecting" | "live" | "error";
   trades: "connecting" | "live" | "error";
   issues: "connecting" | "live" | "error";
+}
+
+/** One sampled point for ward time-series charts (≈1 per stream tick). */
+export interface ZoneTimePoint {
+  ts: string;
+  sim_time?: string;
+  demand?: number;
+  baseline_demand?: number;
+  supply?: number;
+  owned_capacity?: number;
+  effective_capacity?: number;
 }

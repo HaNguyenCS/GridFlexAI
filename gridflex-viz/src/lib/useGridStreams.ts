@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from "react";
+import {
+  appendDemandHistory,
+  appendSupplyHistory,
+  type ZoneHistory,
+} from "./history";
 import type {
   ActiveSpike,
   Issue,
+  SimClock,
   StreamConnection,
   SupplySummary,
   Trade,
@@ -37,6 +43,8 @@ export function useGridStreams() {
     issues: "connecting",
   });
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
+  const [history, setHistory] = useState<ZoneHistory>(new Map());
+  const [sim, setSim] = useState<SimClock | null>(null);
   const zonesRef = useRef(zones);
   zonesRef.current = zones;
 
@@ -69,21 +77,31 @@ export function useGridStreams() {
     };
 
     open("/ws/demand", "demand", (data) => {
+      const ts = (data.ts as string) ?? new Date().toISOString();
+      const readings = (data.readings as ZoneMetrics[]) ?? [];
+      const simClock = data.sim as SimClock | undefined;
+      const simTime = simClock?.sim_time;
       const next = new Map(zonesRef.current);
-      for (const reading of (data.readings as ZoneMetrics[]) ?? []) {
+      for (const reading of readings) {
         mergeZone(next, reading.zone_id, reading);
       }
       setZones(next);
+      setHistory((prev) => appendDemandHistory(prev, ts, readings, simTime));
       setSpikes((data.active_spikes as ActiveSpike[]) ?? []);
-      setLastTs((data.ts as string) ?? null);
+      if (simClock) setSim(simClock);
+      setLastTs(ts);
     });
 
     open("/ws/supply", "supply", (data) => {
+      const ts = (data.ts as string) ?? new Date().toISOString();
+      const readings = (data.readings as ZoneMetrics[]) ?? [];
+      const simTime = (data.sim as SimClock | undefined)?.sim_time;
       const next = new Map(zonesRef.current);
-      for (const reading of (data.readings as ZoneMetrics[]) ?? []) {
+      for (const reading of readings) {
         mergeZone(next, reading.zone_id, reading);
       }
       setZones(next);
+      setHistory((prev) => appendSupplyHistory(prev, ts, readings, simTime));
       setSummary({
         agent: data.agent as string,
         agent_note: data.agent_note as string,
@@ -92,7 +110,7 @@ export function useGridStreams() {
         budget_remaining: data.budget_remaining as number,
         fully_served: data.fully_served as boolean,
       });
-      setLastTs((data.ts as string) ?? null);
+      setLastTs(ts);
     });
 
     open("/ws/trades", "trades", (data) => {
@@ -113,6 +131,8 @@ export function useGridStreams() {
   return {
     apiBase: API,
     zones,
+    history,
+    sim,
     trades,
     issues,
     spikes,

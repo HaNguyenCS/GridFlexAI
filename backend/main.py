@@ -10,6 +10,8 @@ from pydantic import BaseModel, Field
 
 from backend.config import STREAM_INTERVAL_SEC, SUPPLY_BUDGET, WARDS_GEOJSON
 from backend.ingestion.zone_simulator import WardStreamSimulator
+from backend.routes.simulation import init_router
+from backend.simulation.pipeline import run_simulation_from_simulator, to_tick_message
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,6 +22,7 @@ supply_clients: set[WebSocket] = set()
 trades_clients: set[WebSocket] = set()
 issues_clients: set[WebSocket] = set()
 live_clients: set[WebSocket] = set()
+simulation_clients: set[WebSocket] = set()
 
 
 class SolveRequest(BaseModel):
@@ -62,18 +65,39 @@ async def _zone_stream_loop() -> None:
         await asyncio.sleep(STREAM_INTERVAL_SEC)
 
 
+async def _simulation_stream_loop() -> None:
+    while True:
+        if simulation_clients:
+            try:
+                result = await run_simulation_from_simulator(simulator)
+                message = to_tick_message(result).model_dump(mode="json")
+                await _broadcast(simulation_clients, message)
+                logger.debug(
+                    "Broadcast simulation tick (%s clients, stress %s→%s)",
+                    len(simulation_clients),
+                    result.market_result.clearing_result.stress_score_before,
+                    result.market_result.clearing_result.stress_score_after,
+                )
+            except Exception:
+                logger.exception("Simulation tick failed")
+        await asyncio.sleep(STREAM_INTERVAL_SEC)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     stream_task = asyncio.create_task(_zone_stream_loop())
+    simulation_task = asyncio.create_task(_simulation_stream_loop())
     yield
     stream_task.cancel()
-    try:
-        await stream_task
-    except asyncio.CancelledError:
-        pass
+    simulation_task.cancel()
+    for task in (stream_task, simulation_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
-app = FastAPI(title="GridFlex AI", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="GridFlex AI", version="0.6.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -88,17 +112,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(init_router(simulator))
+
 
 @app.get("/health")
 def health() -> dict:
     return {
         "status": "ok",
+        "service": "gridflex-simulation-backend",
         "supply_agent": simulator.supply_agent.name,
         "streams": {
             "demand": f"/ws/demand ({len(demand_clients)} clients)",
             "supply": f"/ws/supply ({len(supply_clients)} clients)",
             "trades": f"/ws/trades ({len(trades_clients)} clients)",
             "issues": f"/ws/issues ({len(issues_clients)} clients)",
+            "simulation": f"/ws/simulation/live ({len(simulation_clients)} clients)",
         },
         "zone_count": len(simulator.profiles),
         "zone_ids": [profile.zone_id for profile in simulator.profiles],
@@ -228,6 +256,39 @@ async def websocket_trades(websocket: WebSocket) -> None:
 async def websocket_issues(websocket: WebSocket) -> None:
     _, _, _, issues_frame, _, _ = simulator.snapshot()
     await _accept_stream(websocket, issues_clients, "issues", issues_frame)
+
+
+@app.websocket("/ws/simulation/live")
+async def websocket_simulation_live(websocket: WebSocket) -> None:
+    await websocket.accept()
+    simulation_clients.add(websocket)
+    logger.info("Simulation stream connected (%s clients)", len(simulation_clients))
+
+    await websocket.send_json(
+        {
+            "type": "connected",
+            "stream": "simulation",
+            "message": "GridFlex flex-market simulation stream ready",
+            "zone_count": len(simulator.profiles),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+
+    try:
+        result = await run_simulation_from_simulator(simulator)
+        await websocket.send_json(to_tick_message(result).model_dump(mode="json"))
+    except Exception:
+        logger.exception("Initial simulation tick failed")
+
+    try:
+        while True:
+            message = await websocket.receive_text()
+            if message == "ping":
+                result = await run_simulation_from_simulator(simulator)
+                await websocket.send_json(to_tick_message(result).model_dump(mode="json"))
+    except WebSocketDisconnect:
+        simulation_clients.discard(websocket)
+        logger.info("Simulation stream disconnected (%s clients)", len(simulation_clients))
 
 
 @app.websocket("/ws/live")

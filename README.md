@@ -44,3 +44,10 @@ backend/
 ├── agents/           # Step 5 — LangGraph
 └── alerts/           # Step 6 — email
 ```
+
+
+
+
+### Resources
+Synthentic Data
+- https://open.toronto.ca/dataset/topographic-mapping-building-outlines/
