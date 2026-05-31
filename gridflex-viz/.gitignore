@@ -3,5 +3,6 @@ dist/
 *.tsbuildinfo
 .env
 backend-ts/
+toronto-src/
 toronto-city-map/
 server.log
