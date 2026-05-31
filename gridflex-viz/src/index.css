@@ -197,7 +197,207 @@ body {
   background: rgb(99 102 241 / 0.08);
 }
 
+.view-tabs {
+  display: inline-flex;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.03);
+  padding: 0.15rem;
+}
+
+.view-tab {
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.view-tab-active {
+  background: rgb(99 102 241 / 0.25);
+  color: #e0e7ff;
+}
+
+.agent-observatory {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.85rem;
+  overflow-y: auto;
+  padding: 0.85rem;
+}
+
+.agent-obs-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.agent-pipeline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+
+.agent-pipeline-step {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.agent-pipeline-arrow {
+  color: #475569;
+  font-size: 1.1rem;
+}
+
+.agent-card {
+  min-width: 160px;
+  max-width: 180px;
+  border: 1px solid rgb(255 255 255 / 0.08);
+  border-radius: 0.85rem;
+  background: rgb(255 255 255 / 0.03);
+  padding: 0.65rem;
+}
+
+.agent-card-active {
+  border-color: rgb(34 197 94 / 0.35);
+}
+
+.agent-card-waiting {
+  border-color: rgb(234 179 8 / 0.25);
+}
+
+.agent-card-error {
+  border-color: rgb(239 68 68 / 0.35);
+}
+
+.agent-status-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: #64748b;
+}
+
+.agent-status-active .agent-status-dot,
+.agent-status-dot.agent-status-active {
+  background: #22c55e;
+  box-shadow: 0 0 8px rgb(34 197 94 / 0.6);
+}
+
+.agent-status-waiting .agent-status-dot,
+.agent-status-dot.agent-status-waiting {
+  background: #eab308;
+}
+
+.agent-status-error .agent-status-dot,
+.agent-status-dot.agent-status-error {
+  background: #ef4444;
+}
+
+.agent-status-badge {
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.agent-status-badge.agent-status-active {
+  background: rgb(34 197 94 / 0.15);
+  color: #86efac;
+}
+
+.agent-status-badge.agent-status-waiting {
+  background: rgb(234 179 8 / 0.15);
+  color: #fde047;
+}
+
+.agent-status-badge.agent-status-error {
+  background: rgb(239 68 68 / 0.15);
+  color: #fca5a5;
+}
+
+.agent-alert-banner {
+  border-color: rgb(99 102 241 / 0.25);
+  background: rgb(99 102 241 / 0.06);
+}
+
+.agent-obs-grid {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 0.85rem;
+}
+
+.ward-agent-matrix {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 0.4rem;
+}
+
+.ward-agent-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  border-radius: 0.55rem;
+  border: 1px solid rgb(255 255 255 / 0.06);
+  padding: 0.4rem 0.25rem;
+  font-size: 0.65rem;
+  text-align: center;
+}
+
+.ward-agent-id {
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.ward-agent-action {
+  font-variant-numeric: tabular-nums;
+  color: #94a3b8;
+}
+
+.ward-agent-risk {
+  font-size: 0.58rem;
+  text-transform: uppercase;
+}
+
+.ward-agent-idle {
+  background: rgb(34 197 94 / 0.06);
+  border-color: rgb(34 197 94 / 0.15);
+}
+
+.ward-agent-bid {
+  background: rgb(56 189 248 / 0.1);
+  border-color: rgb(56 189 248 / 0.3);
+}
+
+.ward-agent-accepted {
+  background: rgb(168 85 247 / 0.12);
+  border-color: rgb(168 85 247 / 0.35);
+}
+
 @media (max-width: 960px) {
+  .agent-obs-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-pipeline {
+    flex-direction: column;
+  }
+
+  .agent-pipeline-arrow {
+    display: none;
+  }
+
   .layout {
     grid-template-columns: 1fr;
     grid-template-rows: 55vh auto;

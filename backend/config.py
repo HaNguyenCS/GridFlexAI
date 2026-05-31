@@ -19,7 +19,7 @@ WARD_LABELED_TRAINING_CSV = REPO_ROOT / "ML" / "data" / "processed" / "ward_labe
 HISTORICAL_SPIKE_THRESHOLD = 1.035
 ROLLING_BASELINE_HOURS = 168
 TORONTO_BASE_DEMAND_MW = 5_200.0
-HISTORICAL_PLAYBACK_START_INDEX = 0  # hour row to start streaming from
+HISTORICAL_PLAYBACK_START_INDEX = 16  # 2024-01-01 16:00 — known spike hour in spike_training.csv
 
 # Supply solver budget ($) applied each tick of the simulation.
 SUPPLY_BUDGET = 4_500_000.0

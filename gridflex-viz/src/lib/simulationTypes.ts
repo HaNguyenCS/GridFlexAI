@@ -31,11 +31,14 @@ export interface KeplerNode {
 
 export interface SimulationBid {
   bid_id: string;
+  agent_id?: string;
   ward_id: string;
   bid_type: string;
   quantity_mw: number;
   price_per_mwh: number;
   status: string;
+  confidence?: number;
+  comfort_impact?: string;
 }
 
 export interface ClearingResult {
@@ -57,29 +60,45 @@ export interface OperatorAlert {
   operator_note: string;
 }
 
+export interface WardPrediction {
+  ward_id: string;
+  ward_name: string;
+  event_type: string;
+  event_probability: number;
+  risk_level: string;
+  predicted_duration_minutes: number;
+  recommended_action: string;
+  recommended_bid_mw: number;
+  drivers: string[];
+}
+
+export interface WardAgentDecision {
+  agent_id: string;
+  ward_id: string;
+  decision: string;
+  bid: SimulationBid | null;
+}
+
+export interface GridPrediction {
+  event_type: string;
+  risk_level: string;
+  target_reduction_mw: number;
+  grid_stress_probability: number;
+  predicted_duration_minutes: number;
+  drivers: string[];
+}
+
 export interface SimulationTick {
   type: string;
   timestamp: string;
-  grid_prediction: {
-    event_type: string;
-    risk_level: string;
-    target_reduction_mw: number;
-    grid_stress_probability: number;
-    predicted_duration_minutes: number;
-    drivers: string[];
-  };
-  ward_predictions: Array<{
-    ward_id: string;
-    ward_name: string;
-    risk_level: string;
-    predicted_duration_minutes: number;
-    recommended_action: string;
-    recommended_bid_mw: number;
-  }>;
+  grid_prediction: GridPrediction;
+  ward_predictions: WardPrediction[];
+  ward_agent_decisions: WardAgentDecision[];
   submitted_bids: SimulationBid[];
   market_result: {
     clearing_result: ClearingResult;
     accepted_bids: SimulationBid[];
+    rejected_bids?: SimulationBid[];
   };
   reporter?: {
     alert: OperatorAlert;
@@ -87,6 +106,15 @@ export interface SimulationTick {
   kepler_nodes: KeplerNode[];
   kepler_flows: KeplerFlow[];
   snapshot?: Record<string, unknown>;
+}
+
+export interface TickSummary {
+  timestamp: string;
+  stressBefore: number;
+  stressAfter: number;
+  bids: number;
+  accepted: number;
+  targetMw: number;
 }
 
 export type SimulationConnection = "connecting" | "live" | "error";
