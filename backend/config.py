@@ -44,8 +44,8 @@ REPORTER_MODE = os.getenv(
     else ("llm" if AGENT_MODE in ("llm", "nemoclaw") else "template"),
 )
 
-# GridFlex ML service (ML/src/api.py) — separate process on port 8002.
-ML_SERVICE_URL = os.getenv("ML_SERVICE_URL", "http://localhost:8002")
+# GridFlex ML service (ML/src/api.py) — separate process on port 8000.
+ML_SERVICE_URL = os.getenv("ML_SERVICE_URL", "http://localhost:8000")
 ML_SERVICE_TIMEOUT_SEC = float(os.getenv("ML_SERVICE_TIMEOUT_SEC", "30"))
 
 # Offline demo: GX10 has no internet; Mac talks to ML over LAN only.

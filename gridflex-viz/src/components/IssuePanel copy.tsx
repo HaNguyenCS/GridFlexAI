@@ -7,19 +7,13 @@ interface Props {
 }
 
 export function IssuePanel({ issues, connection }: Props) {
-  const warnings = issues.filter((issue) => issue.status === "warning");
-  const critical = issues.filter((issue) => issue.status === "issue");
+  const warnings = issues.filter((i) => i.status === "warning");
+  const critical = issues.filter((i) => i.status === "issue");
 
   return (
     <section className="panel flex flex-col gap-3">
       <header className="flex items-center justify-between">
-        <div>
-          <h2 className="panel-title">Issues</h2>
-          <p className="mt-1 text-xs text-slate-500">
-            Capacity warnings and overloads
-          </p>
-        </div>
-
+        <h2 className="panel-title">Issues</h2>
         <span className="badge">{connection.issues}</span>
       </header>
 
@@ -28,7 +22,6 @@ export function IssuePanel({ issues, connection }: Props) {
           <div className="stat-value text-amber-300">{warnings.length}</div>
           <div className="stat-label">Warnings</div>
         </div>
-
         <div className="stat-box border-red-500/30 bg-red-500/10">
           <div className="stat-value text-red-300">{critical.length}</div>
           <div className="stat-label">Critical</div>
@@ -37,11 +30,8 @@ export function IssuePanel({ issues, connection }: Props) {
 
       <ul className="max-h-48 space-y-2 overflow-y-auto text-sm">
         {issues.length === 0 && (
-          <li className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-emerald-200">
-            All wards are within capacity.
-          </li>
+          <li className="text-slate-500">All wards within capacity.</li>
         )}
-
         {issues.map((issue) => (
           <li
             key={issue.zone_id}
@@ -51,20 +41,8 @@ export function IssuePanel({ issues, connection }: Props) {
                 : "border-amber-500/40 bg-amber-500/10"
             }`}
           >
-            <div className="flex items-center justify-between gap-3">
-              <div className="font-medium text-slate-100">{issue.zone_id}</div>
-              <span
-                className={`rounded-full px-2 py-0.5 text-xs ${
-                  issue.status === "issue"
-                    ? "bg-red-500/20 text-red-200"
-                    : "bg-amber-500/20 text-amber-200"
-                }`}
-              >
-                {issue.status}
-              </span>
-            </div>
-
-            <div className="mt-1 text-xs text-slate-400">
+            <div className="font-medium">{issue.zone_id}</div>
+            <div className="text-xs text-slate-400">
               {formatMw(issue.over_capacity)} over · {issue.over_capacity_sec}s
             </div>
           </li>

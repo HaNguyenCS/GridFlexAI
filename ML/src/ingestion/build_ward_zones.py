@@ -18,7 +18,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pyproj import Transformer
+from pyproj import Transformer # type: ignore
 from shapely.geometry import shape
 from shapely.ops import transform
 

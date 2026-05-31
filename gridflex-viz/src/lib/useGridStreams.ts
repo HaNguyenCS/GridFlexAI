@@ -45,33 +45,66 @@ export function useGridStreams() {
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
   const [history, setHistory] = useState<ZoneHistory>(new Map());
   const [sim, setSim] = useState<SimClock | null>(null);
+
   const zonesRef = useRef(zones);
   zonesRef.current = zones;
 
   useEffect(() => {
+    let stopped = false;
     const sockets: WebSocket[] = [];
+    const reconnectTimers: number[] = [];
 
     const open = (
       path: string,
       key: keyof StreamConnection,
       onFrame: (data: Record<string, unknown>) => void
     ) => {
+      if (stopped) return;
+
+      setConnection((c) => ({ ...c, [key]: "connecting" }));
+
       const socket = new WebSocket(wsUrl(path));
       sockets.push(socket);
 
-      socket.onopen = () =>
+      socket.onopen = () => {
+        if (stopped) return;
         setConnection((c) => ({ ...c, [key]: "live" }));
-      socket.onerror = () =>
+      };
+
+      socket.onerror = () => {
+        if (stopped) return;
         setConnection((c) => ({ ...c, [key]: "error" }));
-      socket.onclose = () =>
-        setConnection((c) => ({ ...c, [key]: "error" }));
+      };
+
+      socket.onclose = () => {
+        if (stopped) return;
+
+        setConnection((c) => ({ ...c, [key]: "connecting" }));
+
+        const timer = window.setTimeout(() => {
+          if (!stopped) {
+            open(path, key, onFrame);
+          }
+        }, 1500);
+
+        reconnectTimers.push(timer);
+      };
+
       socket.onmessage = (event) => {
+        if (stopped) return;
+
         try {
           const data = JSON.parse(event.data as string);
-          if (data.type === "connected") return;
+
+          if (data.type === "connected" || data.type === "pong") {
+            setConnection((c) => ({ ...c, [key]: "live" }));
+            return;
+          }
+
+          setConnection((c) => ({ ...c, [key]: "live" }));
           onFrame(data);
-        } catch {
-          // ignore malformed frames
+        } catch (error) {
+          console.warn(`Malformed ${key} frame`, error);
         }
       };
     };
@@ -81,10 +114,12 @@ export function useGridStreams() {
       const readings = (data.readings as ZoneMetrics[]) ?? [];
       const simClock = data.sim as SimClock | undefined;
       const simTime = simClock?.sim_time;
+
       const next = new Map(zonesRef.current);
       for (const reading of readings) {
         mergeZone(next, reading.zone_id, reading);
       }
+
       setZones(next);
       setHistory((prev) => appendDemandHistory(prev, ts, readings, simTime));
       setSpikes((data.active_spikes as ActiveSpike[]) ?? []);
@@ -96,10 +131,12 @@ export function useGridStreams() {
       const ts = (data.ts as string) ?? new Date().toISOString();
       const readings = (data.readings as ZoneMetrics[]) ?? [];
       const simTime = (data.sim as SimClock | undefined)?.sim_time;
+
       const next = new Map(zonesRef.current);
       for (const reading of readings) {
         mergeZone(next, reading.zone_id, reading);
       }
+
       setZones(next);
       setHistory((prev) => appendSupplyHistory(prev, ts, readings, simTime));
       setSummary({
@@ -124,7 +161,19 @@ export function useGridStreams() {
     });
 
     return () => {
-      for (const socket of sockets) socket.close();
+      stopped = true;
+
+      for (const timer of reconnectTimers) {
+        window.clearTimeout(timer);
+      }
+
+      for (const socket of sockets) {
+        try {
+          socket.close();
+        } catch {
+          // ignore cleanup errors
+        }
+      }
     };
   }, []);
 
