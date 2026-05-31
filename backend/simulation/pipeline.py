@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from datetime import datetime, timezone
 
 from backend.agents.grid_forecast_agent import grid_forecast_agent
+from backend.agents.llm_orchestrator import llm_orchestrator
 from backend.agents.market_clearing_agent import market_clearing_agent
 from backend.agents.reporter_agent import reporter_agent
 from backend.agents.ward_agent import build_ward_agents
+from backend.config import AGENT_MODE
 from backend.ingestion.zone_simulator import WardStreamSimulator
 from backend.schemas.simulation import (
     MarketContext,
@@ -23,6 +26,8 @@ from backend.simulation.feature_builder import build_from_simulator, build_snaps
 from backend.simulation.kepler_export import build_kepler_flows, build_kepler_nodes
 from backend.simulation.system_predictor import predict_grid_stress
 
+logger = logging.getLogger(__name__)
+
 
 async def run_simulation_tick(
     *,
@@ -33,16 +38,49 @@ async def run_simulation_tick(
     snapshot: dict | None = None,
     include_reporter: bool = True,
 ) -> SimulationRunResponse:
+    names = ward_names or {}
+    stress_before = predict_grid_stress(system_features.model_dump())["stress_score_before"]
+
+    if AGENT_MODE == "llm":
+        try:
+            return await llm_orchestrator.run_tick(
+                timestamp=timestamp,
+                system_features=system_features.model_dump(),
+                ward_features=[w.model_dump() for w in ward_features],
+                ward_names=names,
+                snapshot=snapshot,
+                stress_before=stress_before,
+            )
+        except Exception:
+            logger.exception("LLM orchestrator failed; falling back to deterministic agents")
+
+    return await _run_deterministic_tick(
+        timestamp=timestamp,
+        system_features=system_features,
+        ward_features=ward_features,
+        ward_names=names,
+        snapshot=snapshot,
+        include_reporter=include_reporter,
+        stress_before=stress_before,
+    )
+
+
+async def _run_deterministic_tick(
+    *,
+    timestamp: str,
+    system_features: SystemFeatures,
+    ward_features: list[WardFeatures],
+    ward_names: dict[str, str],
+    snapshot: dict | None,
+    include_reporter: bool,
+    stress_before: int,
+) -> SimulationRunResponse:
     system_prediction, ward_predictions = grid_forecast_agent.run(
         system_features,
         ward_features,
         ward_names=ward_names,
         timestamp=timestamp,
     )
-
-    stress_before = predict_grid_stress(system_features.model_dump())[
-        "stress_score_before"
-    ]
 
     event_id = str(uuid.uuid4())
     market_context = MarketContext(
@@ -76,7 +114,7 @@ async def run_simulation_tick(
     )
 
     reporter = (
-        reporter_agent.build_alert(system_prediction, market_result)
+        await reporter_agent.build_alert_async(system_prediction, market_result)
         if include_reporter
         else None
     )
@@ -93,6 +131,9 @@ async def run_simulation_tick(
         ward_predictions,
     )
 
+    meta = snapshot or {}
+    meta = {**meta, "agent_mode": "deterministic"}
+
     return SimulationRunResponse(
         simulation_id=event_id,
         timestamp=timestamp,
@@ -104,7 +145,7 @@ async def run_simulation_tick(
         reporter=reporter,
         kepler_nodes=kepler_nodes,
         kepler_flows=kepler_flows,
-        snapshot=snapshot or {},
+        snapshot=meta,
     )
 
 

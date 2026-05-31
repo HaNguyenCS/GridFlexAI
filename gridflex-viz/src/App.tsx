@@ -92,6 +92,10 @@ export default function App() {
           gridConnection={connection}
           supplySummary={summary}
           sim={sim}
+          agentMode={
+            (simTick?.snapshot?.agent_mode as string | undefined) ??
+            (summary.agent === "llm_supply_agent" ? "llm" : "deterministic")
+          }
         />
       ) : (
         <main className="layout">

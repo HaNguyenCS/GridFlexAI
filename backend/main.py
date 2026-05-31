@@ -8,7 +8,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from backend.config import STREAM_INTERVAL_SEC, SUPPLY_BUDGET, WARDS_GEOJSON
+from backend.config import (
+    AGENT_MODE,
+    LLM_STREAM_INTERVAL_SEC,
+    NIM_MODEL,
+    REPORTER_MODE,
+    STREAM_INTERVAL_SEC,
+    SUPPLY_BUDGET,
+    WARDS_GEOJSON,
+)
 from backend.ingestion.zone_simulator import WardStreamSimulator
 from backend.routes.simulation import init_router
 from backend.simulation.pipeline import run_simulation_from_simulator, to_tick_message
@@ -16,7 +24,14 @@ from backend.simulation.pipeline import run_simulation_from_simulator, to_tick_m
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-simulator = WardStreamSimulator(supply_budget=SUPPLY_BUDGET)
+if AGENT_MODE == "llm":
+    from backend.agents.llm_supply_agent import LLMSupplyAgent
+
+    simulator = WardStreamSimulator(supply_budget=SUPPLY_BUDGET, supply_agent=LLMSupplyAgent())
+else:
+    simulator = WardStreamSimulator(supply_budget=SUPPLY_BUDGET)
+
+SIM_TICK_SEC = LLM_STREAM_INTERVAL_SEC if AGENT_MODE == "llm" else STREAM_INTERVAL_SEC
 demand_clients: set[WebSocket] = set()
 supply_clients: set[WebSocket] = set()
 trades_clients: set[WebSocket] = set()
@@ -73,14 +88,15 @@ async def _simulation_stream_loop() -> None:
                 message = to_tick_message(result).model_dump(mode="json")
                 await _broadcast(simulation_clients, message)
                 logger.debug(
-                    "Broadcast simulation tick (%s clients, stress %s→%s)",
+                    "Broadcast simulation tick (%s clients, mode=%s, stress %s→%s)",
                     len(simulation_clients),
+                    result.snapshot.get("agent_mode", AGENT_MODE),
                     result.market_result.clearing_result.stress_score_before,
                     result.market_result.clearing_result.stress_score_after,
                 )
             except Exception:
                 logger.exception("Simulation tick failed")
-        await asyncio.sleep(STREAM_INTERVAL_SEC)
+        await asyncio.sleep(SIM_TICK_SEC)
 
 
 @asynccontextmanager
@@ -130,6 +146,10 @@ def health() -> dict:
         },
         "zone_count": len(simulator.profiles),
         "zone_ids": [profile.zone_id for profile in simulator.profiles],
+        "reporter_mode": REPORTER_MODE,
+        "agent_mode": AGENT_MODE,
+        "nim_model": NIM_MODEL,
+        "sim_tick_sec": SIM_TICK_SEC,
     }
 
 

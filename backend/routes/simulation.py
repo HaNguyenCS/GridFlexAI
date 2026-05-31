@@ -8,8 +8,10 @@ from fastapi import APIRouter, HTTPException
 
 from backend.agents.grid_forecast_agent import grid_forecast_agent
 from backend.agents.market_clearing_agent import market_clearing_agent
+from backend.agents.nim_client import nim_client
 from backend.agents.reporter_agent import reporter_agent
 from backend.agents.ward_agent import collect_ward_bids
+from backend.config import AGENT_MODE, NIM_BASE_URL, NIM_MODEL, REPORTER_MODE
 from backend.schemas.simulation import (
     GridMockSnapshot,
     GridPredictRequest,
@@ -64,6 +66,17 @@ def init_router(simulator) -> APIRouter:
             return await run_simulation_request(request, simulator)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.get("/agent/nim/health")
+    async def agent_nim_health():
+        nim = await nim_client.health_check()
+        return {
+            "agent_mode": AGENT_MODE,
+            "reporter_mode": REPORTER_MODE,
+            "nim_base_url": NIM_BASE_URL,
+            "nim_model": NIM_MODEL,
+            "nim": nim,
+        }
 
     @router.post("/agent/report")
     async def agent_report():

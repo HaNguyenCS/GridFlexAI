@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -30,3 +31,16 @@ CAPACITY_TRANSFER_PRICE_PER_MW = 120.0
 # Over-capacity escalation thresholds (seconds of continuous demand > capacity).
 OVER_CAPACITY_WARNING_SEC = 30
 OVER_CAPACITY_ISSUE_SEC = 60
+
+# Agent execution mode on DGX Spark / NVIDIA device.
+# llm       — Grid Forecast + 25 Ward Agents + Reporter via one NIM call; Supply via NIM note
+# deterministic — rule-based agents (fallback)
+AGENT_MODE = os.getenv("AGENT_MODE", "llm")
+REPORTER_MODE = os.getenv("REPORTER_MODE", "llm" if AGENT_MODE == "llm" else "template")
+NIM_BASE_URL = os.getenv("NIM_BASE_URL", "http://localhost:8001/v1")
+NIM_API_KEY = os.getenv("NIM_API_KEY", "not-needed")
+# DGX Spark GB10 (128GB unified): 8B–70B locally; Ultra 253B typically needs hosted NIM or 2× Spark.
+NIM_MODEL = os.getenv("NIM_MODEL", "meta/llama-3.1-8b-instruct")
+NIM_TIMEOUT_SEC = float(os.getenv("NIM_TIMEOUT_SEC", "45"))
+# LLM inference may exceed 2s — use a longer tick when AGENT_MODE=llm on Spark.
+LLM_STREAM_INTERVAL_SEC = float(os.getenv("LLM_STREAM_INTERVAL_SEC", "15"))

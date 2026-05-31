@@ -17,6 +17,7 @@ interface Props {
   gridConnection: StreamConnection;
   supplySummary: SupplySummary;
   sim: SimClock | null;
+  agentMode?: string;
 }
 
 type AgentStatus = "idle" | "active" | "error" | "waiting";
@@ -35,6 +36,7 @@ export function AgentObservatory({
   gridConnection,
   supplySummary,
   sim,
+  agentMode = "deterministic",
 }: Props) {
   const gridLive = Object.values(gridConnection).every((s) => s === "live");
   const gridError = Object.values(gridConnection).some((s) => s === "error");
@@ -51,7 +53,7 @@ export function AgentObservatory({
     {
       id: "supply",
       name: "Supply Agent",
-      role: "Capacity allocation · inter-ward trades",
+      role: agentMode === "llm" ? `NVIDIA NIM · ${supplySummary.agent ?? "llm_supply_agent"}` : "Capacity allocation · inter-ward trades",
       status: connStatus(gridLive, gridError),
       stream: "/ws/supply",
       detail: supplySummary.agent ?? "default_capacity_agent",
@@ -63,7 +65,7 @@ export function AgentObservatory({
     {
       id: "forecast",
       name: "Grid Forecast Agent",
-      role: "System stress + 25 ward predictions",
+      role: agentMode === "llm" ? "NIM: system stress + 25 ward predictions" : "System stress + 25 ward predictions",
       status: connStatus(simLive, simError),
       stream: "/ws/simulation/live",
       detail: tick
@@ -77,7 +79,7 @@ export function AgentObservatory({
     {
       id: "ward",
       name: "Ward Agents ×25",
-      role: "Parallel bid decisions (asyncio.gather)",
+      role: agentMode === "llm" ? "NIM batch decisions (25 wards in one call)" : "Parallel asyncio.gather (deterministic)",
       status: connStatus(simLive, simError),
       stream: "internal",
       detail: tick ? `${submitted} bids · ${decisions.length - submitted} idle` : "Awaiting tick…",
@@ -109,7 +111,7 @@ export function AgentObservatory({
     {
       id: "reporter",
       name: "Reporter Agent",
-      role: "Template operator alert",
+      role: agentMode === "llm" ? "NVIDIA NIM operator narrative" : "Template or NVIDIA NIM (REPORTER_MODE=llm)",
       status: connStatus(simLive, simError),
       stream: "internal",
       detail: tick?.reporter?.alert.severity ?? "Awaiting tick…",
@@ -126,7 +128,8 @@ export function AgentObservatory({
         <div>
           <h2 className="text-base font-semibold text-slate-100">Agent Observatory</h2>
           <p className="text-xs text-slate-500">
-            Staged multi-agent pipeline · {tickCount} simulation ticks
+            {agentMode === "llm" ? "NVIDIA NIM on DGX Spark" : "Deterministic Python agents"}
+            {" · "}{tickCount} simulation ticks
             {sim?.historical_date && ` · ${sim.historical_date} ${sim.sim_time}`}
           </p>
         </div>
