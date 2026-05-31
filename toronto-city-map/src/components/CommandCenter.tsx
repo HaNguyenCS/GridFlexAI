@@ -65,7 +65,7 @@ export function CommandCenter({ open, onClose }: Props) {
 
   return (
     <section
-      className="pointer-events-auto absolute bottom-6 right-6 z-10 flex w-[540px] max-w-[calc(100vw-3rem)] flex-col overflow-hidden rounded-[14px] border border-[var(--color-ink-3)] bg-[color-mix(in_oklch,var(--color-ink-1)_88%,transparent)] backdrop-blur-xl transition-all duration-300 ease-in-out"
+      className="pointer-events-auto absolute bottom-4 right-4 z-10 flex w-[480px] max-w-[calc(100vw-2rem)] max-h-[calc(100vh-8rem)] flex-col overflow-hidden rounded-[14px] border border-[var(--color-ink-3)] bg-[color-mix(in_oklch,var(--color-ink-1)_88%,transparent)] backdrop-blur-xl transition-all duration-300 ease-in-out"
       aria-label="Command Center"
     >
         {/* Header */}

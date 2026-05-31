@@ -23,6 +23,8 @@ import { EventFeed, type FeedItem, type GridFeedItem } from "./components/EventF
 import { SourcesPanel } from "./components/SourcesPanel";
 import { CommandCenter } from "./components/CommandCenter";
 import { IesoEnergyPanel } from "./components/IesoEnergyPanel";
+import { MapAgentPanel } from "./components/MapAgentPanel";
+import { ModeSelector, type GridMode } from "./components/ModeSelector";
 
 import {
   fetchTorontoBuildings,
@@ -44,7 +46,9 @@ import { OverlayState } from "./lib/overlay";
 import { fetchTorontoWards, type Ward } from "./lib/wards";
 import { fetchIesoEnergy, type IesoEnergyDataset } from "./lib/iesoEnergy";
 import { useGridStreams } from "./lib/gridStreams";
+import { useMapAgent } from "./lib/useMapAgent";
 import { useGridWs } from "./lib/gridWs";
+import { useGridStreamML } from "./lib/gridStreamML";
 import type {
   Building,
   ConnectionStatus,
@@ -161,25 +165,42 @@ export default function App() {
     return saved ? JSON.parse(saved) : false;
   });
 
+  // ── Grid mode selection ─────────────────────────────────────────────
+  const [gridMode, setGridMode] = useState<GridMode | null>(() => {
+    const saved = localStorage.getItem('gridMode');
+    return saved ? (JSON.parse(saved) as GridMode) : null;
+  });
+
   // ── Grid streams (GridFlex RAG severity on ward zones) ────────────
   // Simulated local grid severity stream — paints wards with RAG shades.
-  const gridStreams = useGridStreams({ wards, enabled: wards.length > 0, speed });
+  const gridStreams = useGridStreams({ wards, enabled: wards.length > 0 && gridMode === "simulated", speed });
+
+  // ── Grid ML (ML-based ward stress predictions from GridFlex API) ───
+  // ML stream is enabled when not paused (play/pause button controls it)
+  const gridStreamML = useGridStreamML({ enabled: !paused && gridMode === "predictive" });
+
+  // ── Map agent — watches ward colours and fires intervention cards ──
+  const mapAgent = useMapAgent({ wardColors: gridStreams.wardColors, wards });
 
   // ── Grid WS — real WebSocket streams from the grid simulation server ─
   // Connects to http://localhost:3000/ws/{demand,supply,trades,issues}.
-  const gridWs = useGridWs({ enabled: true });
+  const gridWs = useGridWs({ enabled: gridMode === "simulated" });
 
-  // Merge both grid sources — local sim + real WS — into one feed.
+  // Merge all grid sources — local sim + real WS + ML — into one feed.
   const gridFeedItems: GridFeedItem[] = useMemo(
     () => {
-      const all = [
-        ...gridStreams.events.map((e) => ({ ...e, arrivedAt: new Date(e.ts).getTime() })),
-        ...gridWs.events.map((e) => ({ ...e, arrivedAt: new Date(e.ts).getTime() })),
-      ];
+      const all = [];
+      if (gridMode === "simulated") {
+        all.push(...gridStreams.events.map((e) => ({ ...e, arrivedAt: new Date(e.ts).getTime() })));
+        all.push(...gridWs.events.map((e) => ({ ...e, arrivedAt: new Date(e.ts).getTime() })));
+      }
+      if (gridMode === "predictive" && !paused) {
+        all.push(...gridStreamML.events.map((e) => ({ ...e, arrivedAt: new Date(e.ts).getTime() })));
+      }
       all.sort((a, b) => b.arrivedAt - a.arrivedAt);
       return all;
     },
-    [gridStreams.events, gridWs.events]
+    [gridStreams.events, gridWs.events, gridStreamML.events, gridMode, paused]
   );
 
   // Persist collapse states and toggle states to localStorage
@@ -517,8 +538,17 @@ export default function App() {
 
   const sourcesEnabledCount = sources.filter((s) => s.enabled).length;
 
+  // Handle mode selection
+  const handleModeSelect = (mode: GridMode) => {
+    setGridMode(mode);
+    localStorage.setItem('gridMode', JSON.stringify(mode));
+  };
+
   return (
     <div className="relative h-[100dvh] w-screen overflow-hidden bg-[var(--color-ink-0)]">
+      {/* Mode selector wizard - shown until mode is selected */}
+      {!gridMode && <ModeSelector onSelect={handleModeSelect} />}
+
       <MapView
         buildings={buildings}
         overlay={overlayRef.current}
@@ -621,6 +651,13 @@ export default function App() {
       />
 
       {iesoData && <IesoEnergyPanel dataset={iesoData} />}
+
+      <MapAgentPanel
+        messages={mapAgent.messages}
+        unreadCount={mapAgent.unreadCount}
+        onActioned={mapAgent.markActioned}
+        onDismiss={mapAgent.dismiss}
+      />
     </div>
   );
 }

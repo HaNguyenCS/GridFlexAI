@@ -4,6 +4,7 @@
 // Right chunk is the connection status pill. Single line on desktop,
 // height capped per the impeccable / taste rules.
 
+import { ModeSelector, type GridMode } from "./ModeSelector";
 import { Pulse, Broadcast, WifiSlash, WarningCircle, Plug, CornersIn, CornersOut, SquaresFour } from "@phosphor-icons/react";
 import clsx from "clsx";
 import type { ConnectionStatus } from "../lib/types";

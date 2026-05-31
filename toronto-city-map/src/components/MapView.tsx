@@ -42,6 +42,7 @@ import {
   pickWardLineWidth,
 } from "../lib/wardOverlay";
 import { severityToFill, severityToOutline, type WardGridColor } from "../lib/gridStreams";
+import type { WardGridColor as MLWardGridColor } from "../lib/gridStreamML";
 export type ColorMode = "height" | "energy";
 
 const INITIAL_VIEW: MapViewState = {
@@ -111,7 +112,7 @@ interface Props {
   /** Global opacity multiplier for building fills (0–1). */
   buildingOpacity: number;
   /** Grid stream ward colour fills (RAG severity shades). */
-  wardGridColors?: Map<string, WardGridColor>;
+  wardGridColors?: Map<string, WardGridColor | MLWardGridColor>;
   /** Severities currently visible in the legend. */
   enabledSeverities?: Set<GridSeverity>;
 }
