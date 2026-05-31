@@ -626,6 +626,86 @@ button {
   gap: 0.5rem;
 }
 
+.agent-hierarchy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.agent-orchestrator-tier {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.agent-card-orchestrator {
+  min-width: 220px;
+  max-width: 320px;
+  border-color: rgb(99 102 241 / 0.45);
+  background: rgb(99 102 241 / 0.08);
+  box-shadow: 0 0 24px rgb(99 102 241 / 0.12);
+}
+
+.agent-hierarchy-connector {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: min(560px, 100%);
+  color: #64748b;
+}
+
+.agent-hierarchy-connector::before {
+  content: "";
+  width: 1px;
+  height: 0.85rem;
+  background: rgb(255 255 255 / 0.14);
+}
+
+.agent-hierarchy-connector::after {
+  content: "";
+  width: 100%;
+  height: 1px;
+  margin-top: 0.15rem;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(255 255 255 / 0.14) 15%,
+    rgb(255 255 255 / 0.14) 85%,
+    transparent
+  );
+}
+
+.agent-hierarchy-label {
+  margin-top: 0.35rem;
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.agent-subordinates {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 1rem;
+  width: 100%;
+  padding-top: 0.15rem;
+}
+
+.agent-subordinate-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.agent-subordinate-step::before {
+  content: "";
+  width: 1px;
+  height: 0.55rem;
+  background: rgb(255 255 255 / 0.1);
+}
+
 .agent-pipeline-step {
   display: flex;
   align-items: center;
@@ -872,5 +952,10 @@ button {
 
   .agent-obs-grid {
     grid-template-columns: 1fr;
+  }
+
+  .agent-subordinates {
+    flex-direction: column;
+    align-items: center;
   }
 }

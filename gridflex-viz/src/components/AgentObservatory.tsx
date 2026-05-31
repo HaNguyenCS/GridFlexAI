@@ -1,5 +1,12 @@
 import type { SimulationTick, TickSummary } from "../lib/simulationTypes";
-import type { SimClock, StreamConnection, SupplySummary } from "../lib/types";
+import type {
+  ActiveSpike,
+  Issue,
+  SimClock,
+  StreamConnection,
+  SupplySummary,
+  Trade,
+} from "../lib/types";
 import { formatMw } from "../lib/format";
 
 const RISK_COLORS: Record<string, string> = {
@@ -17,6 +24,9 @@ interface Props {
   gridConnection: StreamConnection;
   supplySummary: SupplySummary;
   sim: SimClock | null;
+  trades: Trade[];
+  issues: Issue[];
+  spikes: ActiveSpike[];
   agentMode?: string;
 }
 
@@ -26,6 +36,12 @@ function connStatus(live: boolean, error: boolean): AgentStatus {
   if (error) return "error";
   if (live) return "active";
   return "waiting";
+}
+
+function streamConnStatus(keys: (keyof StreamConnection)[], gridConnection: StreamConnection): AgentStatus {
+  const live = keys.every((k) => gridConnection[k] === "live");
+  const error = keys.some((k) => gridConnection[k] === "error");
+  return connStatus(live, error);
 }
 
 function stressPhase(tick: SimulationTick | null): string {
@@ -46,12 +62,51 @@ function agentModeLabel(agentMode: string): string {
   return "Deterministic agents";
 }
 
-function agentModeDetail(agentMode: string): string {
-  if (agentMode === "nemoclaw") return "Agent orchestration through NemoClaw";
-  if (agentMode === "llm") return "Agent decisions generated through an LLM service";
-  if (agentMode === "ml_service") return "Forecasting and ward bidding via ML service";
-  if (agentMode === "stress_simulator_live") return "Phased demo: forecast, bid, clear, recover";
-  return "Local deterministic forecast, bidding, clearing, and reporting";
+function inferOrchestration(
+  supplySummary: SupplySummary,
+  spikes: ActiveSpike[],
+  issues: Issue[],
+  trades: Trade[]
+) {
+  const criticalIssues = issues.filter((i) => i.status === "issue");
+  const imbalancedCount = issues.filter(
+    (i) => i.status === "issue" || i.status === "warning" || i.over_capacity > 0
+  ).length;
+
+  const traderAction =
+    criticalIssues.length > 0
+      ? "escalate"
+      : trades.length > 0
+        ? "review_trades"
+        : "observe";
+
+  const needsRebalance =
+    supplySummary.fully_served === false ||
+    (supplySummary.total_unmet_mw ?? 0) > 0.5 ||
+    spikes.length > 0 ||
+    imbalancedCount > 0;
+
+  const balancerAction = needsRebalance ? "rebalance" : "observe";
+
+  const notes: string[] = [];
+  if (criticalIssues.length > 0) {
+    notes.push(`Trader escalates ${criticalIssues.length} critical issue(s) first`);
+  }
+  if (trades.length > 0 && criticalIssues.length === 0) {
+    notes.push("Trader reviewing active capacity trades");
+  }
+  if (needsRebalance) {
+    notes.push(
+      `Balancer rebalancing (unmet=${formatMw(supplySummary.total_unmet_mw ?? 0)}, spikes=${spikes.length})`
+    );
+  } else {
+    notes.push("Grid balanced; Balancer observing");
+  }
+  if (traderAction === "observe") {
+    notes.push("No trade or issue activity; Trader observing");
+  }
+
+  return { balancerAction, traderAction, notes };
 }
 
 export function AgentObservatory({
@@ -62,6 +117,9 @@ export function AgentObservatory({
   gridConnection,
   supplySummary,
   sim,
+  trades,
+  issues,
+  spikes,
   agentMode = "deterministic",
 }: Props) {
   const gridLive = Object.values(gridConnection).every((status) => status === "live");
@@ -87,14 +145,49 @@ export function AgentObservatory({
       .map((node) => node.ward_id)
   );
 
-  const agents = [
+  const criticalIssues = issues.filter((i) => i.status === "issue");
+  const warnings = issues.filter((i) => i.status === "warning");
+  const totalTradedMw = trades.reduce((sum, t) => sum + t.mw, 0);
+  const { balancerAction, traderAction, notes } = inferOrchestration(
+    supplySummary,
+    spikes,
+    issues,
+    trades
+  );
+
+  const wardRole =
+    activeAgentMode === "nemoclaw"
+      ? "OpenClaw batch decisions (25 wards per tick)"
+      : activeAgentMode === "llm"
+        ? "NIM batch decisions (25 wards per call)"
+        : activeAgentMode === "ml_service"
+          ? "ML service POST /agent/ward-market"
+          : "Parallel asyncio.gather (deterministic)";
+
+  const orchestrator = {
+    id: "orchestrator",
+    name: "Orchestrator",
+    role: "Oversees Balancer, Trader, and Ward Agents each tick",
+    status: connStatus(gridLive, gridError),
+    stream: "stream_agents runner",
+    detail: `Balancer=${balancerAction} · Trader=${traderAction}`,
+    metrics: [
+      { label: "Phase", value: phase.replace(/_/g, " ") },
+      { label: "Warnings", value: String(warnings.length) },
+    ],
+  };
+
+  const subordinateAgents = [
     {
-      id: "supply",
-      name: "Supply Agent",
-      role: "Capacity allocation and inter-ward balancing",
-      status: connStatus(gridLive, gridError),
-      stream: "/ws/supply",
-      detail: supplySummary.agent ?? "default_capacity_agent",
+      id: "balancer",
+      name: "Balancer",
+      role: "Demand · supply · trades stream monitoring",
+      status: streamConnStatus(["demand", "supply", "trades"], gridConnection),
+      stream: "/ws/demand · /ws/supply · /ws/trades",
+      detail:
+        balancerAction === "rebalance"
+          ? `Rebalancing · ${spikes.length} spike(s)`
+          : "Observing · grid balanced",
       metrics: [
         { label: "Unmet MW", value: formatMw(supplySummary.total_unmet_mw) },
         {
@@ -107,80 +200,37 @@ export function AgentObservatory({
       ],
     },
     {
-      id: "forecast",
-      name: "Grid Forecast Agent",
-      role: "Detects grid stress and estimates flexibility target",
-      status: connStatus(simLive, simError),
-      stream: "/ws/simulation/live",
-      detail: tick
-        ? `${tick.grid_prediction.event_type} · ${tick.grid_prediction.risk_level}`
-        : "Awaiting tick…",
+      id: "trader",
+      name: "Trader",
+      role: "Trades · issues stream monitoring",
+      status: streamConnStatus(["trades", "issues"], gridConnection),
+      stream: "/ws/trades · /ws/issues",
+      detail:
+        traderAction === "escalate"
+          ? `Escalating ${criticalIssues.length} critical issue(s)`
+          : traderAction === "review_trades"
+            ? `Reviewing ${trades.length} active trade(s)`
+            : "Observing · no critical activity",
       metrics: [
-        {
-          label: "Stress prob",
-          value: tick
-            ? `${(tick.grid_prediction.grid_stress_probability * 100).toFixed(0)}%`
-            : "—",
-        },
-        {
-          label: "Target MW",
-          value: tick ? formatMw(tick.grid_prediction.target_reduction_mw) : "—",
-        },
+        { label: "Trades", value: String(trades.length) },
+        { label: "Traded MW", value: formatMw(totalTradedMw) },
       ],
     },
     {
       id: "ward",
       name: "Ward Agents ×25",
-      role: "Each ward evaluates local flexibility and submits bids",
+      role: wardRole,
       status: connStatus(simLive, simError),
-      stream: "internal",
+      stream: "/ws/simulation/live",
       detail: tick
         ? `${submitted} bids · ${Math.max(0, decisions.length - submitted)} idle`
-        : "Awaiting tick…",
+        : "Awaiting simulation tick…",
       metrics: [
         { label: "Submitted", value: String(submitted) },
         {
-          label: "Predictions",
-          value: tick ? String(tick.ward_predictions.length) : "—",
+          label: "Accepted",
+          value: tick ? String(tick.market_result.accepted_bids.length) : "—",
         },
-      ],
-    },
-    {
-      id: "market",
-      name: "Market Clearing Agent",
-      role: "Ranks bids, clears the target, and updates stress",
-      status: connStatus(simLive, simError),
-      stream: "internal",
-      detail: tick?.market_result.clearing_result.clearing_status ?? "Awaiting tick…",
-      metrics: [
-        {
-          label: "Accepted MW",
-          value: tick
-            ? formatMw(
-                (tick.snapshot?.pipeline as { market_clearing?: { accepted_mw?: number } } | undefined)
-                  ?.market_clearing?.accepted_mw ??
-                  tick.market_result.clearing_result.accepted_reduction_mw
-              )
-            : "—",
-        },
-        {
-          label: "Stress",
-          value: tick
-            ? `${tick.market_result.clearing_result.stress_score_before}→${tick.market_result.clearing_result.stress_score_after}`
-            : "—",
-        },
-      ],
-    },
-    {
-      id: "reporter",
-      name: "Reporter Agent",
-      role: "Creates the operator-facing alert and action summary",
-      status: connStatus(simLive, simError),
-      stream: "internal",
-      detail: tick?.reporter?.alert.severity ?? "Awaiting tick…",
-      metrics: [
-        { label: "Severity", value: tick?.reporter?.alert.severity ?? "—" },
-        { label: "Phase", value: phase },
       ],
     },
   ];
@@ -191,28 +241,35 @@ export function AgentObservatory({
         <div>
           <h2 className="text-base font-semibold text-slate-100">Agent Observatory</h2>
           <p className="text-xs text-slate-500">
-            {agentModeLabel(activeAgentMode)}
-            {" · "}
-            {agentModeDetail(activeAgentMode)}
-            {" · "}
-            {tickCount} simulation ticks
+            Orchestrator oversees Balancer · Trader · Ward Agents ×25
+            {" · "}{agentModeLabel(activeAgentMode)}
+            {" · "}{tickCount} simulation ticks
             {sim?.historical_date && ` · ${sim.historical_date} ${sim.sim_time}`}
           </p>
         </div>
 
         <div className="flex gap-2 text-xs">
           <StatusBadge label="Grid streams" status={connStatus(gridLive, gridError)} />
-          <StatusBadge label="Simulation" status={connStatus(simLive, simError)} />
+          <StatusBadge label="Ward agents" status={connStatus(simLive, simError)} />
         </div>
       </header>
 
-      <section className="agent-pipeline">
-        {agents.map((agent, index) => (
-          <div key={agent.id} className="agent-pipeline-step">
-            {index > 0 && <span className="agent-pipeline-arrow">→</span>}
-            <AgentCard agent={agent} />
-          </div>
-        ))}
+      <section className="agent-hierarchy">
+        <div className="agent-orchestrator-tier">
+          <AgentCard agent={orchestrator} prominent />
+        </div>
+
+        <div className="agent-hierarchy-connector" aria-hidden="true">
+          <span className="agent-hierarchy-label">coordinates</span>
+        </div>
+
+        <div className="agent-subordinates">
+          {subordinateAgents.map((agent) => (
+            <div key={agent.id} className="agent-subordinate-step">
+              <AgentCard agent={agent} />
+            </div>
+          ))}
+        </div>
       </section>
 
       {tick?.reporter?.alert && (
@@ -238,6 +295,17 @@ export function AgentObservatory({
         </section>
       )}
 
+      {notes.length > 0 && (
+        <section className="panel agent-alert-banner">
+          <p className="text-sm font-medium text-indigo-300">Orchestrator tick</p>
+          <ul className="mt-1 space-y-0.5 text-xs text-slate-400">
+            {notes.map((note) => (
+              <li key={note}>{note}</li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <div className="agent-obs-grid">
         <section className="panel">
           <h3 className="panel-title">Ward Agent Decisions</h3>
@@ -247,7 +315,7 @@ export function AgentObservatory({
           </p>
 
           <div className="ward-agent-matrix">
-            {(tick?.ward_agent_decisions ?? []).length === 0 && (
+            {decisions.length === 0 && (
               <p className="text-xs text-slate-500">
                 Connect simulation stream to see ward agents…
               </p>
@@ -306,23 +374,37 @@ export function AgentObservatory({
         </section>
 
         <section className="panel flex flex-col gap-3">
-          <h3 className="panel-title">Forecast Drivers</h3>
-
-          <ul className="space-y-1 text-xs text-slate-400">
-            {(tick?.grid_prediction.drivers ?? ["Waiting for forecast agent…"]).map(
-              (driver) => (
-                <li key={driver} className="rounded bg-white/5 px-2 py-1">
-                  {driver}
-                </li>
-              )
+          <h3 className="panel-title">Trader · issues</h3>
+          <ul className="max-h-32 space-y-1 overflow-y-auto text-xs">
+            {issues.length === 0 && (
+              <li className="text-slate-500">No open issues</li>
             )}
+            {issues.slice(0, 6).map((issue) => (
+              <li key={issue.zone_id} className="rounded bg-white/5 px-2 py-1">
+                <span className="font-medium text-slate-300">{issue.zone_id}</span>
+                {" · "}
+                <span style={{ color: RISK_COLORS[issue.status === "issue" ? "critical" : "medium"] }}>
+                  {issue.status}
+                </span>
+                <p className="mt-0.5 truncate text-slate-600">{issue.message}</p>
+              </li>
+            ))}
           </ul>
 
-          <h3 className="panel-title mt-2">Tick History</h3>
+          <h3 className="panel-title mt-2">Active spikes</h3>
+          <ul className="space-y-1 text-xs text-slate-400">
+            {spikes.length === 0 && <li className="text-slate-500">No active demand spikes</li>}
+            {spikes.map((spike) => (
+              <li key={`${spike.scope}-${spike.zone_id ?? "grid"}`} className="rounded bg-white/5 px-2 py-1">
+                {spike.zone_id ?? spike.scope} · ×{spike.multiplier.toFixed(2)} · {spike.spike_type}
+              </li>
+            ))}
+          </ul>
 
-          <ul className="max-h-48 space-y-1 overflow-y-auto text-xs">
+          <h3 className="panel-title mt-2">Ward tick history</h3>
+          <ul className="max-h-40 space-y-1 overflow-y-auto text-xs">
             {tickHistory.length === 0 && (
-              <li className="text-slate-500">No ticks yet</li>
+              <li className="text-slate-500">No simulation ticks yet</li>
             )}
 
             {tickHistory.map((historyTick) => (
@@ -344,40 +426,6 @@ export function AgentObservatory({
               </li>
             ))}
           </ul>
-
-          <h3 className="panel-title mt-2">Active Ward Predictions</h3>
-
-          <ul className="max-h-40 space-y-1 overflow-y-auto text-xs">
-            {(tick?.ward_predictions ?? [])
-              .filter((prediction) => prediction.recommended_action !== "none")
-              .slice(0, 8)
-              .map((prediction) => (
-                <li key={prediction.ward_id} className="rounded bg-white/5 px-2 py-1">
-                  <span className="font-medium text-slate-300">
-                    {prediction.ward_name}
-                  </span>
-                  {" · "}
-                  <span className="text-slate-500">
-                    {prediction.recommended_action.replace(/_/g, " ")}
-                  </span>
-                  {" · "}
-                  <span className="tabular-nums text-indigo-300">
-                    {formatMw(prediction.recommended_bid_mw)}
-                  </span>
-
-                  <p className="mt-0.5 truncate text-slate-600">
-                    {prediction.drivers[0]}
-                  </p>
-                </li>
-              ))}
-
-            {tick &&
-              tick.ward_predictions.filter(
-                (prediction) => prediction.recommended_action !== "none"
-              ).length === 0 && (
-                <li className="text-slate-500">All wards normal this tick</li>
-              )}
-          </ul>
         </section>
       </div>
     </div>
@@ -396,9 +444,9 @@ interface AgentCardProps {
   };
 }
 
-function AgentCard({ agent }: AgentCardProps) {
+function AgentCard({ agent, prominent = false }: AgentCardProps & { prominent?: boolean }) {
   return (
-    <div className={`agent-card agent-card-${agent.status}`}>
+    <div className={`agent-card agent-card-${agent.status}${prominent ? " agent-card-orchestrator" : ""}`}>
       <div className="flex items-start justify-between gap-2">
         <p className="text-xs font-semibold text-slate-200">{agent.name}</p>
         <span className={`agent-status-dot agent-status-${agent.status}`} />

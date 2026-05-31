@@ -10,4 +10,4 @@ echo "GridFlex local dev: AGENT_MODE=$AGENT_MODE"
 echo "GX10 demo: ./scripts/run_gx10_all.sh (GX10) + ./scripts/run_mac_view.sh (Mac)"
 echo ""
 
-exec python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+exec python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload

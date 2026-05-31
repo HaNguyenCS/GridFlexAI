@@ -4,10 +4,11 @@ import { GridFlexEventFeed } from "./components/GridFlexEventFeed";
 import { WardMap } from "./components/WardMap";
 import { useGridStreams } from "./lib/useGridStreams";
 import { useSimulationStream } from "./lib/useSimulationStream";
+import type { StreamConnection } from "./lib/types";
 
 type AppView = "grid" | "agents";
 
-function connectionState(values: Record<string, string>, simConnection: string) {
+function connectionState(values: StreamConnection, simConnection: string) {
   const gridValues = Object.values(values);
   const gridError = gridValues.some((v) => v === "error");
   const gridLive = gridValues.length > 0 && gridValues.every((v) => v === "live");
@@ -31,6 +32,9 @@ export default function App() {
     zones,
     sim,
     summary,
+    trades,
+    issues,
+    spikes,
     connection,
     selectedZone,
     setSelectedZone,
@@ -208,14 +212,10 @@ export default function App() {
             gridConnection={connection}
             supplySummary={summary}
             sim={sim}
-            agentMode={
-              (simTick?.snapshot?.agent_mode as string | undefined) ??
-              (summary.agent === "nemoclaw_supply_agent"
-                ? "nemoclaw"
-                : summary.agent === "llm_supply_agent"
-                  ? "llm"
-                  : "ml_service")
-            }
+            trades={trades}
+            issues={issues}
+            spikes={spikes}
+            agentMode={simTick?.snapshot?.agent_mode as string | undefined}
           />
         </main>
       ) : (
