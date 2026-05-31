@@ -9,6 +9,7 @@ from src.predict import predict_grid_stress
 from src.intervention import plan_intervention
 from src.ward_risk import predict_ward_stress
 from src.agent_payload import build_agent_rebalance_payload
+from src.ward_agent_payload import build_ward_agent_market_payload
 
 
 app = FastAPI(title="GridFlex ML API")
@@ -60,6 +61,7 @@ def root() -> Dict[str, Any]:
             "demo_stress": "GET /demo/stress",
             "demo_wards": "GET /demo/wards",
             "agent_rebalance": "GET /agent/rebalance",
+            "agent_ward_market": "GET /agent/ward-market",
         },
     }
 
@@ -281,3 +283,29 @@ def agent_rebalance() -> Dict[str, Any]:
     )
 
     return build_agent_rebalance_payload(ward_result)
+
+
+@app.get("/agent/ward-market")
+def agent_ward_market() -> Dict[str, Any]:
+    path = Path("data/mock/mock_live_grid.json")
+
+    if not path.exists():
+        return {
+            "error": "Missing mock live grid file",
+            "expected_path": str(path),
+        }
+
+    with path.open("r") as file:
+        stress_row = json.load(file)
+
+    model_row = strip_non_model_fields(stress_row)
+
+    prediction = predict_grid_stress(model_row)
+    prediction["estimated_system_stress_duration_hours"] = 3.0
+
+    ward_result = predict_ward_stress(
+        system_prediction=prediction,
+        live_row=stress_row,
+    )
+
+    return build_ward_agent_market_payload(ward_result)
