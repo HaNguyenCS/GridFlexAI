@@ -1,0 +1,87 @@
+"""REST routes for the GridFlex flex-market simulation pipeline."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, HTTPException
+
+from backend.agents.grid_forecast_agent import grid_forecast_agent
+from backend.agents.market_clearing_agent import market_clearing_agent
+from backend.agents.reporter_agent import reporter_agent
+from backend.agents.ward_agent import collect_ward_bids
+from backend.schemas.simulation import (
+    GridMockSnapshot,
+    GridPredictRequest,
+    MarketClearRequest,
+    SimulationRunRequest,
+    SystemFeatures,
+    WardBidsRequest,
+    WardPredictRequest,
+)
+from backend.simulation.feature_builder import build_from_simulator
+from backend.simulation.pipeline import run_simulation_request
+
+router = APIRouter(tags=["simulation"])
+
+
+def init_router(simulator) -> APIRouter:
+    """Attach simulator reference for routes that read live state."""
+
+    @router.get("/grid/mock")
+    def grid_mock() -> GridMockSnapshot:
+        timestamp, system, wards = build_from_simulator(simulator)
+        predict_request = GridPredictRequest(**system.model_dump())
+        preview = grid_forecast_agent.predict_grid(predict_request)
+        return GridMockSnapshot(
+            timestamp=timestamp,
+            system=system,
+            predict_request=predict_request,
+            prediction_preview=preview,
+            nodes=wards,
+        )
+
+    @router.post("/grid/predict")
+    def grid_predict(body: GridPredictRequest):
+        return grid_forecast_agent.predict_grid(body)
+
+    @router.post("/grid/ward/predict")
+    def grid_ward_predict(body: WardPredictRequest):
+        return grid_forecast_agent.predict_ward_batch(body)
+
+    @router.post("/agents/ward/bids")
+    async def agents_ward_bids(body: WardBidsRequest):
+        return await collect_ward_bids(body)
+
+    @router.post("/market/clear")
+    def market_clear(body: MarketClearRequest):
+        return market_clearing_agent.clear_request(body)
+
+    @router.post("/simulation/run")
+    async def simulation_run(body: SimulationRunRequest | None = None):
+        request = body or SimulationRunRequest()
+        try:
+            return await run_simulation_request(request, simulator)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/agent/report")
+    async def agent_report():
+        result = await run_simulation_request(SimulationRunRequest(), simulator)
+        if result.reporter is None:
+            raise HTTPException(status_code=500, detail="Reporter unavailable")
+        return result.reporter
+
+    @router.post("/agent/alert-summary")
+    async def agent_alert_summary():
+        result = await run_simulation_request(SimulationRunRequest(), simulator)
+        if result.reporter is None:
+            raise HTTPException(status_code=500, detail="Reporter unavailable")
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "alert": result.reporter.alert,
+            "stress_before": result.market_result.clearing_result.stress_score_before,
+            "stress_after": result.market_result.clearing_result.stress_score_after,
+        }
+
+    return router

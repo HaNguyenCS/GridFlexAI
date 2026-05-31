@@ -1,0 +1,135 @@
+{
+  "GET /zones/demand": {
+    "stream": "demand",
+    "ts": "2026-05-30T21:00:41.917199+00:00",
+    "zone_count": 25,
+    "sim": {
+      "sim_tick": 153,
+      "sim_day": 1,
+      "sim_hour": 16,
+      "sim_minute": 12,
+      "sim_time": "16:12",
+      "sim_minutes_per_tick": 4,
+      "tick_sec": 2,
+      "time_compression": 120
+    },
+    "active_spikes": [
+      {
+        "scope": "city",
+        "zone_id": null,
+        "multiplier": 1.0,
+        "peak_multiplier": 1.1713,
+        "phase": "ramp_up",
+        "ticks_remaining": 16,
+        "spike_type": "city"
+      }
+    ],
+    "readings": [
+      {
+        "zone_id": "ward_01",
+        "demand": 290005.888,
+        "baseline_demand": 205052.597,
+        "spike_active": true,
+        "spike_multiplier": 1.4143,
+        "owned_capacity": 320.882,
+        "effective_capacity": 320.882,
+        "capacity_imported": 0.0,
+        "capacity_exported": 0.0,
+        "over_capacity": 289685.006,
+        "over_capacity_sec": 298.0,
+        "status": "issue"
+      }
+    ]
+  },
+  "GET /zones/supply": {
+    "stream": "supply",
+    "ts": "2026-05-30T21:00:41.918399+00:00",
+    "sim": {
+      "sim_tick": 154,
+      "sim_day": 1,
+      "sim_hour": 16,
+      "sim_minute": 16,
+      "sim_time": "16:16",
+      "sim_minutes_per_tick": 4,
+      "tick_sec": 2,
+      "time_compression": 120
+    },
+    "agent": "default_capacity_agent",
+    "total_unmet_mw": 30878477.109,
+    "total_cost": 4500000.0,
+    "readings": [
+      {
+        "zone_id": "ward_01",
+        "supply": 320.882,
+        "owned_capacity": 320.882,
+        "effective_capacity": 320.882,
+        "capacity_imported": 0.0,
+        "capacity_exported": 0.0,
+        "unmet_demand": 356395.4,
+        "incremental_cost": 4442521.68,
+        "supply_cost_per_mw": 3400.0,
+        "over_capacity_sec": 300.0,
+        "status": "issue",
+        "agent": "default_capacity_agent"
+      }
+    ]
+  },
+  "GET /zones/trades": {
+    "stream": "trades",
+    "ts": "2026-05-30T21:00:41.919519+00:00",
+    "sim": {
+      "sim_tick": 155,
+      "sim_day": 1,
+      "sim_hour": 16,
+      "sim_minute": 20,
+      "sim_time": "16:20",
+      "sim_minutes_per_tick": 4,
+      "tick_sec": 2,
+      "time_compression": 120
+    },
+    "trade_count": 3,
+    "trades": [
+      {
+        "from_zone_id": "ward_15",
+        "to_zone_id": "ward_09",
+        "mw": 182.222,
+        "price_per_mw": 120.0,
+        "cost": 21866.64
+      },
+      {
+        "from_zone_id": "ward_14",
+        "to_zone_id": "ward_09",
+        "mw": 143.482,
+        "price_per_mw": 120.0,
+        "cost": 17217.84
+      }
+    ]
+  },
+  "GET /zones/issues": {
+    "stream": "issues",
+    "ts": "2026-05-30T21:00:41.920668+00:00",
+    "sim": {
+      "sim_tick": 156,
+      "sim_day": 1,
+      "sim_hour": 16,
+      "sim_minute": 24,
+      "sim_time": "16:24",
+      "sim_minutes_per_tick": 4,
+      "tick_sec": 2,
+      "time_compression": 120
+    },
+    "issue_count": 19,
+    "warning_count": 2,
+    "issues": [
+      {
+        "zone_id": "ward_01",
+        "status": "issue",
+        "demand": 549797.164,
+        "capacity": 320.882,
+        "over_capacity": 549476.282,
+        "over_capacity_sec": 304.0,
+        "message": "ward_01 exceeded capacity for 304s (549476.3 MW over limit) \u2014 grid intervention required"
+      }
+    ]
+  }
+}
