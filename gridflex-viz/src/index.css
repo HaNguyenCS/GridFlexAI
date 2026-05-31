@@ -959,3 +959,65 @@ button {
     align-items: center;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Trade annotation overlays — floating callouts + arrows between wards
+   --------------------------------------------------------------------------- */
+
+.trade-callout-chip {
+  will-change: transform;
+  transition: opacity 280ms ease, transform 280ms ease;
+  opacity: 0;
+}
+
+.trade-callout-chip[data-mounted="true"] {
+  opacity: 1;
+}
+
+.trade-callout-chip-inner {
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  background: rgba(8, 13, 20, 0.85);
+  backdrop-filter: blur(12px);
+}
+
+.trade-arrow-stroke {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: trade-arrow-draw 600ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes trade-arrow-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.trade-anchor-dot {
+  animation: trade-dot-pulse 2s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+@keyframes trade-dot-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.15);
+  }
+}
+
+.trade-anchor-ring {
+  animation: trade-ring-expand 2s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+@keyframes trade-ring-expand {
+  0%, 100% {
+    opacity: 0.5;
+    r: 8;
+  }
+  50% {
+    opacity: 0.2;
+    r: 12;
+  }
+}

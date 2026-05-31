@@ -4,7 +4,7 @@ import { GridFlexEventFeed } from "./components/GridFlexEventFeed";
 import { WardMap } from "./components/WardMap";
 import { useGridStreams } from "./lib/useGridStreams";
 import { useSimulationStream } from "./lib/useSimulationStream";
-import { useGridStreams as useMapGridStreams } from "./lib/mapGridStreams";
+import { useWardColorsFromSimulation } from "./lib/useWardColorsFromSimulation";
 import type { StreamConnection } from "./lib/types";
 import { fetchTorontoWards } from "./lib/wards";
 import type { Ward } from "./lib/mapTypes";
@@ -56,11 +56,11 @@ export default function App() {
     fetchTorontoWards().then(setWards).catch(console.error);
   }, []);
 
-  // Map grid streams for ward severity colors
-  const { wardColors } = useMapGridStreams({
-    wards,
-    enabled: view === "grid",
-    cadenceMs: 2000,
+  // Use real-time simulation data for ward colors instead of mock stream
+  const keplerNodes = simTick?.kepler_nodes ?? [];
+  const { wardColors } = useWardColorsFromSimulation({
+    keplerNodes,
+    ttlMs: 10000, // Colors expire after 10 seconds if no update
   });
 
   const stressPhase = simTick?.snapshot?.stress_phase as string | undefined;
@@ -245,6 +245,7 @@ export default function App() {
               flows={[]}
               simNodes={simTick?.kepler_nodes ?? []}
               wardGridColors={wardColors}
+              trades={trades}
             />
           </section>
 

@@ -15,6 +15,7 @@ import { LightingEffect, AmbientLight, DirectionalLight } from "@deck.gl/core";
 import type { MapViewState, PickingInfo } from "@deck.gl/core";
 
 import type { Building, Ward, WardGridColor } from "../lib/mapTypes";
+import type { Trade } from "../lib/types";
 import {
   OverlayState,
   pickFill,
@@ -26,6 +27,7 @@ import { severityToFill, severityToOutline } from "../lib/mapGridStreams";
 import { DARK_STYLE_URL } from "../lib/mapStyle";
 import { fetchTorontoBuildings, indexById } from "../lib/buildings";
 import { fetchTorontoWards } from "../lib/wards";
+import { TradeAnnotationOverlays } from "./TradeAnnotationOverlays";
 
 const INITIAL_VIEW: MapViewState = {
   longitude: -79.3832,
@@ -72,6 +74,7 @@ interface Props {
   simNodes?: any[];
   wardGridColors?: Map<string, WardGridColor>;
   enabledSeverities?: Set<string>;
+  trades?: Trade[];
 }
 
 export function WardMap({
@@ -79,6 +82,7 @@ export function WardMap({
   onSelectZone,
   wardGridColors,
   enabledSeverities,
+  trades = [],
 }: Props) {
   const mapRef = useRef<MapRef | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -89,6 +93,7 @@ export function WardMap({
   hoverIdRef.current = hoverId;
   const [viewState, setViewState] = useState<MapViewState>(INITIAL_VIEW);
   const [loading, setLoading] = useState(true);
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
 
   const overlay = useMemo(() => new OverlayState(), []);
   const overlayVersion = overlay.version;
@@ -136,12 +141,13 @@ export function WardMap({
     };
   }, []);
 
-  // Track container size (for future annotation overlays)
+  // Track container size (for annotation overlays)
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const measure = () => {
-      // Can be used for annotation overlays later
+      const rect = el.getBoundingClientRect();
+      setContainerSize({ width: rect.width, height: rect.height });
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -335,6 +341,17 @@ export function WardMap({
             "radial-gradient(ellipse at center, transparent 55%, rgba(7,9,12,0.65) 100%)",
         }}
       />
+
+      {/* Trade annotation overlays */}
+      {containerSize.width > 0 && containerSize.height > 0 && trades.length > 0 && (
+        <TradeAnnotationOverlays
+          width={containerSize.width}
+          height={containerSize.height}
+          viewState={viewState}
+          wards={wards}
+          trades={trades}
+        />
+      )}
     </div>
   );
 }
