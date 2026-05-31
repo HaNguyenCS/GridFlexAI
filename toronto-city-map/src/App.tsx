@@ -22,7 +22,7 @@ import { LegendPanel } from "./components/LegendPanel";
 import { EventFeed, type FeedItem, type GridFeedItem } from "./components/EventFeed";
 import { SourcesPanel } from "./components/SourcesPanel";
 import { CommandCenter } from "./components/CommandCenter";
-import { CommandCenterTrigger } from "./components/CommandCenterTrigger";
+import { IesoEnergyPanel } from "./components/IesoEnergyPanel";
 
 import {
   fetchTorontoBuildings,
@@ -30,18 +30,25 @@ import {
 } from "./lib/buildings";
 import {
   fetchEnergyDataset,
+  fetchEnergyGeoJSON,
   buildEnergyIndex,
+  matchEnergyToBuildings,
   type BuildingEnergy,
   type EnergyDataset,
+  type EnergyGeoDataset,
+  type EnergyGeoFeature,
 } from "./lib/energy";
 import { createMultiStream, type MultiStreamHandle } from "./lib/stream";
 import { loadSources, saveSources } from "./lib/sources";
 import { OverlayState } from "./lib/overlay";
 import { fetchTorontoWards, type Ward } from "./lib/wards";
+import { fetchIesoEnergy, type IesoEnergyDataset } from "./lib/iesoEnergy";
 import { useGridStreams } from "./lib/gridStreams";
+import { useGridWs } from "./lib/gridWs";
 import type {
   Building,
   ConnectionStatus,
+  GridSeverity,
   StreamEvent,
   StreamEventKind,
   StreamSource,
@@ -50,6 +57,7 @@ import type {
 const FEED_CAP = 80;
 
 const ALL_KINDS: StreamEventKind[] = ["highlight", "annotate", "alert"];
+const ALL_SEVERITIES: GridSeverity[] = ["normal", "moderate", "high", "critical"];
 
 export default function App() {
   // ── Buildings ───────────────────────────────────────────────────────
@@ -79,6 +87,9 @@ export default function App() {
     return new Set(sources.filter((s) => s.enabled).map((s) => s.id));
   });
   const [seenKinds, setSeenKinds] = useState<Set<StreamEventKind>>(new Set());
+  const [enabledSeverities, setEnabledSeverities] = useState<Set<GridSeverity>>(
+    () => new Set(ALL_SEVERITIES)
+  );
 
   // Monotonic clock used by AnnotationOverlays to recompute TTL bars
   // without invalidating deck.gl's per-building colour caches.
@@ -88,10 +99,15 @@ export default function App() {
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [eventsTotal, setEventsTotal] = useState(0);
   const [paused, setPaused] = useState(false);
+  const [speed, setSpeed] = useState(1);
   const [hovered, setHovered] = useState<Building | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [commandOpen, setCommandOpen] = useState(false);
 
+
+
+
+  
   // ── Energy consumption (City of Toronto open data) ──────────────────
   const [colorMode, setColorMode] = useState<ColorMode>("height");
   const [energyDataset, setEnergyDataset] = useState<EnergyDataset | null>(null);
@@ -101,9 +117,23 @@ export default function App() {
     if (!energyDataset || buildings.length === 0) return null;
     return buildEnergyIndex(buildings, energyDataset);
   }, [energyDataset, buildings]);
-  
+
+  // ── Energy geojson — real metered data per building ─────────────────
+  const [energyGeo, setEnergyGeo] = useState<EnergyGeoDataset | null>(null);
+  const energyGeoFetchDoneRef = useRef(false);
+
+  // Spatial index: match energy geojson points to building footprints.
+  const energyMatchById = useMemo<Map<string, EnergyGeoFeature> | null>(() => {
+    if (!energyGeo || buildings.length === 0) return null;
+    return matchEnergyToBuildings(buildings, energyGeo);
+  }, [energyGeo, buildings]);
+
   // ── Wards ───────────────────────────────────────────────────────────
   const [wards, setWards] = useState<Ward[]>([]);
+
+  // ── IESO grid generation (hourly by fuel type) ────────────────────
+  const [iesoData, setIesoData] = useState<IesoEnergyDataset | null>(null);
+  const iesoFetchDoneRef = useRef(false);
   const [showWards, setShowWards] = useState(() => {
     const saved = localStorage.getItem('showWards');
     return saved ? JSON.parse(saved) : true;
@@ -113,6 +143,12 @@ export default function App() {
   const [buildingOpacity, setBuildingOpacity] = useState(() => {
     const saved = localStorage.getItem('buildingOpacity');
     return saved ? Number(JSON.parse(saved)) : 1;
+  });
+
+  // ── Height color palette ─────────────────────────────────────────
+  const [heightPaletteId, setHeightPaletteId] = useState(() => {
+    const saved = localStorage.getItem('heightPaletteId');
+    return saved ? JSON.parse(saved) : 'elevation';
   });
 
   // ── Panel collapse states ───────────────────────────────────────────
@@ -126,12 +162,24 @@ export default function App() {
   });
 
   // ── Grid streams (GridFlex RAG severity on ward zones) ────────────
-  // Wired after wards load; the hook internally emits periodic events
-  // that paint each ward with red/orange/yellow/green severity shades.
-  const gridStreams = useGridStreams({ wards, enabled: wards.length > 0 });
+  // Simulated local grid severity stream — paints wards with RAG shades.
+  const gridStreams = useGridStreams({ wards, enabled: wards.length > 0, speed });
+
+  // ── Grid WS — real WebSocket streams from the grid simulation server ─
+  // Connects to http://localhost:3000/ws/{demand,supply,trades,issues}.
+  const gridWs = useGridWs({ enabled: true });
+
+  // Merge both grid sources — local sim + real WS — into one feed.
   const gridFeedItems: GridFeedItem[] = useMemo(
-    () => gridStreams.events.map((e) => ({ ...e, arrivedAt: new Date(e.ts).getTime() })),
-    [gridStreams.events]
+    () => {
+      const all = [
+        ...gridStreams.events.map((e) => ({ ...e, arrivedAt: new Date(e.ts).getTime() })),
+        ...gridWs.events.map((e) => ({ ...e, arrivedAt: new Date(e.ts).getTime() })),
+      ];
+      all.sort((a, b) => b.arrivedAt - a.arrivedAt);
+      return all;
+    },
+    [gridStreams.events, gridWs.events]
   );
 
   // Persist collapse states and toggle states to localStorage
@@ -150,6 +198,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('buildingOpacity', JSON.stringify(buildingOpacity));
   }, [buildingOpacity]);
+
+  useEffect(() => {
+    localStorage.setItem('heightPaletteId', JSON.stringify(heightPaletteId));
+  }, [heightPaletteId]);
 
   const streamRef = useRef<MultiStreamHandle | null>(null);
 
@@ -187,14 +239,22 @@ export default function App() {
 
   // Lazy energy fetch — only pull the annual energy consumption dataset
   // when the user switches to the "Energy use" colour mode tab.
-  // The fetch runs once; subsequent tab switches reuse the cached result.
   useEffect(() => {
     if (colorMode !== "energy" || energyFetchDoneRef.current) return;
     const ac = new AbortController();
     setEnergyLoading(true);
-    fetchEnergyDataset({ signal: ac.signal })
-      .then((dataset) => {
+    Promise.all([
+      fetchEnergyDataset({ signal: ac.signal }),
+      !energyGeoFetchDoneRef.current
+        ? fetchEnergyGeoJSON({ signal: ac.signal })
+        : Promise.resolve(null),
+    ])
+      .then(([dataset, geo]) => {
         if (dataset) setEnergyDataset(dataset);
+        if (geo) {
+          setEnergyGeo(geo);
+          energyGeoFetchDoneRef.current = true;
+        }
       })
       .finally(() => {
         energyFetchDoneRef.current = true;
@@ -202,6 +262,21 @@ export default function App() {
       });
     return () => ac.abort();
   }, [colorMode]);
+
+  // Load IESO grid generation data.
+  useEffect(() => {
+    if (iesoFetchDoneRef.current) return;
+    const ac = new AbortController();
+    fetchIesoEnergy({ signal: ac.signal })
+      .then((data) => {
+        if (!ac.signal.aborted && data) {
+          setIesoData(data);
+          iesoFetchDoneRef.current = true;
+        }
+      })
+      .catch(() => {});
+    return () => ac.abort();
+  }, []);
 
   // Load Toronto ward boundaries.
   useEffect(() => {
@@ -364,6 +439,27 @@ export default function App() {
     });
   };
 
+  const handleSpeedChange = (newSpeed: number) => {
+    setSpeed(newSpeed);
+    streamRef.current?.setSpeed(newSpeed);
+  };
+
+  const allPanelsCollapsed = legendCollapsed && feedCollapsed && !commandOpen;
+
+  const toggleCollapseAll = () => {
+    if (allPanelsCollapsed) {
+      // All collapsed → expand all
+      setLegendCollapsed(false);
+      setFeedCollapsed(false);
+      setCommandOpen(true);
+    } else {
+      // Any open → collapse all
+      setLegendCollapsed(true);
+      setFeedCollapsed(true);
+      setCommandOpen(false);
+    }
+  };
+
   const injectAlert = () => {
     const target = buildings[Math.floor(Math.random() * buildings.length)];
     streamRef.current?.inject({
@@ -392,6 +488,24 @@ export default function App() {
     });
   };
 
+  const toggleSeverity = (sev: GridSeverity) => {
+    setEnabledSeverities((prev) => {
+      const next = new Set(prev);
+      if (next.has(sev)) next.delete(sev);
+      else next.add(sev);
+      return next;
+    });
+  };
+
+  const severityCounts = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const wc of gridStreams.wardColors.values()) {
+      out[wc.severity] = (out[wc.severity] ?? 0) + 1;
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gridStreams.wardColors]);
+
   const toggleSourceVisibility = (id: string) => {
     setEnabledSources((prev) => {
       const next = new Set(prev);
@@ -415,11 +529,14 @@ export default function App() {
         enabledSources={enabledSources}
         onFocusBuilding={focusBuilding}
         colorMode={colorMode}
+        heightPaletteId={heightPaletteId}
         energyById={energyById}
+        energyMatchById={energyMatchById}
         wards={wards}
         showWards={showWards}
         buildingOpacity={buildingOpacity}
         wardGridColors={gridStreams.wardColors}
+        enabledSeverities={enabledSeverities}
       />
 
       <BuildingsLoadingOverlay
@@ -437,6 +554,10 @@ export default function App() {
         sourcesEnabled={sourcesEnabledCount}
         sourcesTotal={sources.length}
         onOpenSources={() => setSourcesOpen(true)}
+        allPanelsCollapsed={allPanelsCollapsed}
+        onToggleCollapseAll={toggleCollapseAll}
+        commandOpen={commandOpen}
+        onOpenCommand={() => setCommandOpen(true)}
       />
 
       <LegendPanel
@@ -446,6 +567,9 @@ export default function App() {
         enabledSources={enabledSources}
         onToggleKind={toggleKind}
         onToggleSource={toggleSourceVisibility}
+        enabledSeverities={enabledSeverities}
+        onToggleSeverity={toggleSeverity}
+        severityCounts={severityCounts}
         sources={sources}
         seenKinds={seenKinds}
         hoveredLabel={hovered?.label ?? hovered?.id ?? null}
@@ -456,12 +580,17 @@ export default function App() {
         colorMode={colorMode}
         onColorModeChange={setColorMode}
         energyDataset={energyDataset}
+        energyGeo={energyGeo}
         energyLoading={energyLoading}
         showWards={showWards}
         onToggleWards={() => setShowWards((v: boolean) => !v)}
         wardCount={wards.length}
         buildingOpacity={buildingOpacity}
         onBuildingOpacityChange={setBuildingOpacity}
+        heightPaletteId={heightPaletteId}
+        onHeightPaletteIdChange={setHeightPaletteId}
+        speed={speed}
+        onSpeedChange={handleSpeedChange}
       />
 
       <EventFeed
@@ -473,6 +602,8 @@ export default function App() {
         collapsed={feedCollapsed}
         onToggleCollapse={() => setFeedCollapsed((prev: boolean) => !prev)}
         gridItems={gridFeedItems}
+        wsStatus={gridWs.status}
+        wsEventCount={gridWs.totalReceived}
       />
 
       <SourcesPanel
@@ -484,21 +615,12 @@ export default function App() {
         rates={sourceRates}
       />
 
-      {/* Command Center trigger — positioned directly under the live
-          indicator at the top-right corner of the viewport. */}
-      <div className="pointer-events-none absolute right-6 top-[72px] z-20 flex justify-end">
-        <div className="pointer-events-auto">
-          <CommandCenterTrigger
-            onClick={() => setCommandOpen((v) => !v)}
-            isActive={commandOpen}
-          />
-        </div>
-      </div>
-
       <CommandCenter
         open={commandOpen}
         onClose={() => setCommandOpen(false)}
       />
+
+      {iesoData && <IesoEnergyPanel dataset={iesoData} />}
     </div>
   );
 }

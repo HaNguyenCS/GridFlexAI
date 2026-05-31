@@ -4,7 +4,7 @@
 // Right chunk is the connection status pill. Single line on desktop,
 // height capped per the impeccable / taste rules.
 
-import { Pulse, Broadcast, WifiSlash, WarningCircle, Plug } from "@phosphor-icons/react";
+import { Pulse, Broadcast, WifiSlash, WarningCircle, Plug, CornersIn, CornersOut, SquaresFour } from "@phosphor-icons/react";
 import clsx from "clsx";
 import type { ConnectionStatus } from "../lib/types";
 
@@ -17,6 +17,14 @@ interface Props {
   sourcesEnabled: number;
   sourcesTotal: number;
   onOpenSources: () => void;
+  /** Whether all panels are currently collapsed. */
+  allPanelsCollapsed: boolean;
+  /** Toggle collapse/expand all panels. */
+  onToggleCollapseAll: () => void;
+  /** Whether the Command Center panel is currently open. */
+  commandOpen: boolean;
+  /** Open the Command Center panel. */
+  onOpenCommand: () => void;
 }
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
@@ -37,6 +45,10 @@ export function HeaderBar({
   sourcesEnabled,
   sourcesTotal,
   onOpenSources,
+  allPanelsCollapsed,
+  onToggleCollapseAll,
+  commandOpen,
+  onOpenCommand,
 }: Props) {
   const live = status === "live";
   return (
@@ -67,6 +79,31 @@ export function HeaderBar({
           onClick={onOpenSources}
         />
         <StatusPill status={status} url={streamUrl} live={live} />
+        {!commandOpen && (
+          <button
+            type="button"
+            onClick={onOpenCommand}
+            title="Open Command Center"
+            className="flex h-9 items-center gap-2 rounded-full border border-[var(--color-ink-3)] bg-[color-mix(in_oklch,var(--color-ink-1)_82%,transparent)] px-3 text-[12px] text-[var(--color-ink-7)] backdrop-blur-md transition-all hover:text-[var(--color-ink-8)] hover:border-[var(--color-ink-4)] active:translate-y-px"
+          >
+            <SquaresFour size={13} weight="bold" />
+            <span className="font-mono text-[10px] uppercase tracking-[0.18em]">
+              Command
+            </span>
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onToggleCollapseAll}
+          className="grid h-9 w-9 place-items-center rounded-full border border-[var(--color-ink-3)] bg-[color-mix(in_oklch,var(--color-ink-1)_82%,transparent)] text-[var(--color-ink-6)] backdrop-blur-md transition-all hover:text-[var(--color-ink-8)] hover:bg-[color-mix(in_oklch,var(--color-ink-1)_92%,transparent)] active:translate-y-px"
+          title={allPanelsCollapsed ? "Expand all panels" : "Collapse all panels"}
+        >
+          {allPanelsCollapsed ? (
+            <CornersOut size={16} weight="bold" />
+          ) : (
+            <CornersIn size={16} weight="bold" />
+          )}
+        </button>
       </div>
     </header>
   );

@@ -126,6 +126,8 @@ interface UseGridStreamsOptions {
   cadenceMs?: number;
   /** Max events kept in the history buffer. Default 60. */
   historyCap?: number;
+  /** Speed multiplier (e.g. 0.5 = half speed, 2 = double). Default 1. */
+  speed?: number;
 }
 
 interface UseGridStreamsResult {
@@ -145,6 +147,7 @@ export function useGridStreams({
   enabled = true,
   cadenceMs = 1800,
   historyCap = 60,
+  speed = 1,
 }: UseGridStreamsOptions): UseGridStreamsResult {
   const [wardColors, setWardColors] = useState<Map<string, WardGridColor>>(
     () => new Map()
@@ -153,6 +156,8 @@ export function useGridStreams({
   const [isLive, setIsLive] = useState(false);
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(false);
+  const speedRef = useRef(speed);
+  speedRef.current = speed;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pruneRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -217,7 +222,8 @@ export function useGridStreams({
     const tick = () => {
       emit();
       const jitter = 0.7 + Math.random() * 0.6; // ±30 %
-      timerRef.current = setTimeout(tick, cadenceMs * jitter);
+      const s = speedRef.current || 1;
+      timerRef.current = setTimeout(tick, (cadenceMs * jitter) / s);
     };
 
     timerRef.current = setTimeout(tick, 400);

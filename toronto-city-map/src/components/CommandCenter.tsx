@@ -1,10 +1,11 @@
-// CommandCenter — right-aligned operator drawer.
+// CommandCenter — floating operator panel.
 // Composes the GlobalStatusHeader (Reserve + Stress Score) and the
 // DiagnosisPanel (qualitative narrative across three grouped sections).
 // Opens via CommandCenterTrigger placed below the live indicator.
+// Styled consistently with LegendPanel and EventFeed as a floating glass panel.
 
 import { useEffect } from "react";
-import { X } from "@phosphor-icons/react";
+import { X, SquaresFour } from "@phosphor-icons/react";
 import { GlobalStatusHeader } from "./GlobalStatusHeader";
 import { DiagnosisPanel } from "./DiagnosisPanel";
 
@@ -63,48 +64,44 @@ export function CommandCenter({ open, onClose }: Props) {
   if (!open) return null;
 
   return (
-    <>
-      {/* Scrim */}
-      <div
-        aria-hidden
-        className="command-center-scrim fixed inset-0 z-40 bg-[color-mix(in_oklch,var(--color-ink-0)_55%,transparent)]"
-        onClick={onClose}
-      />
-
-      {/* Panel */}
-      <aside
-        role="dialog"
-        aria-label="Command Center"
-        className="command-center-panel fixed right-0 top-0 z-50 flex h-full w-[min(540px,92vw)] flex-col border-l border-[var(--color-ink-3)] bg-[var(--color-ink-0)] shadow-[-12px_0_36px_color-mix(in_oklch,var(--color-ink-0)_55%,transparent)]"
-      >
+    <section
+      className="pointer-events-auto absolute bottom-6 right-6 z-10 flex w-[540px] max-w-[calc(100vw-3rem)] flex-col overflow-hidden rounded-[14px] border border-[var(--color-ink-3)] bg-[color-mix(in_oklch,var(--color-ink-1)_88%,transparent)] backdrop-blur-xl transition-all duration-300 ease-in-out"
+      aria-label="Command Center"
+    >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-[var(--color-ink-3)] px-6 py-4">
+        <header className="flex items-center justify-between gap-3 border-b border-[var(--color-ink-3)] px-4 py-3">
           <div className="flex items-center gap-2.5">
-            <span
-              aria-hidden
-              className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] shadow-[0_0_8px_color-mix(in_oklch,var(--color-accent)_55%,transparent)]"
-            />
-            <span className="font-mono text-[10px] uppercase tracking-[0.24em] text-[var(--color-ink-5)]">
+            <span className="grid h-6 w-6 place-items-center rounded-md bg-[color-mix(in_oklch,var(--color-accent)_18%,var(--color-ink-2))]">
+              <SquaresFour size={13} weight="bold" className="text-[var(--color-accent)]" />
+            </span>
+            <span className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-[var(--color-ink-6)]">
               Command Center
             </span>
-            <span className="font-mono text-[10px] uppercase tracking-[0.24em] text-[var(--color-ink-4)]">
-              · Toronto Grid
-            </span>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md p-1.5 text-[var(--color-ink-5)] transition-colors hover:bg-[var(--color-ink-2)] hover:text-[var(--color-ink-8)] active:translate-y-[1px]"
-            title="Close Command Center (Esc)"
-            aria-label="Close Command Center"
-          >
-            <X size={16} weight="bold" />
-          </button>
-        </div>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={onClose}
+              className="grid h-7 w-7 place-items-center rounded-md text-[var(--color-ink-6)] transition-colors hover:bg-[var(--color-ink-2)] hover:text-[var(--color-ink-8)] active:translate-y-px"
+              title="Collapse Command Center"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="grid h-7 w-7 place-items-center rounded-md text-[var(--color-ink-6)] transition-colors hover:bg-[var(--color-ink-2)] hover:text-[var(--color-ink-8)] active:translate-y-px"
+              title="Close Command Center (Esc)"
+              aria-label="Close Command Center"
+            >
+              <X size={14} weight="bold" />
+            </button>
+          </div>
+        </header>
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto">
-          <div className="flex flex-col gap-6 px-6 py-6">
+          <div className="flex flex-col gap-6 px-4 py-4">
             <GlobalStatusHeader
               reserveMW={reserveMW}
               reserveMargin={reserveMargin}
@@ -118,7 +115,6 @@ export function CommandCenter({ open, onClose }: Props) {
             />
           </div>
         </div>
-      </aside>
-    </>
+    </section>
   );
 }

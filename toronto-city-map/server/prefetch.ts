@@ -9,10 +9,17 @@
 // `/data/*` so the frontend can hit a same-origin URL with no CORS
 // to negotiate.
 //
+// Datasets:
+//   buildings  — Topographic Mapping building outlines (GeoJSON)
+//   wards      — City Ward boundaries 2018 (GeoJSON)
+//   energy     — Annual Energy Consumption per city building (XLSX)
+//   ieso       — IESO Generator Output by Fuel Type Hourly (XML → JSON)
+//
 // Usage:
 //   npm run prefetch                  # all datasets
 //   npm run prefetch -- buildings     # subset
 //   npm run prefetch -- energy wards
+//   npm run prefetch -- ieso          # IESO hourly only
 //
 // Re-running is idempotent: existing files are overwritten so each run
 // captures whatever is published *now*.
@@ -29,6 +36,78 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+// ---------------------------------------------------------------------------
+// IESO XML parsing helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the IESO PUB_GenOutputbyFuelHourly.xml into a compact JSON
+ * structure the frontend can consume without an XML parser.
+ *
+ * Output shape:
+ *   { deliveryYear, createdAt, days: [ { date, hours: [ { hour, fuels: { NUCLEAR: MW, ... } } ] } ] }
+ */
+function parseIesoXml(xml: string): {
+  deliveryYear: number;
+  createdAt: string;
+  days: Array<{
+    date: string;
+    hours: Array<{ hour: number; fuels: Record<string, number> }>;
+  }>;
+} {
+  const days: Array<{
+    date: string;
+    hours: Array<{ hour: number; fuels: Record<string, number> }>;
+  }> = [];
+
+  // Extract delivery year
+  const yearMatch = xml.match(/<DeliveryYear>(\d{4})<\/DeliveryYear>/);
+  const deliveryYear = yearMatch ? Number(yearMatch[1]) : new Date().getFullYear();
+
+  // Extract created timestamp
+  const createdMatch = xml.match(/<CreatedAt>([^<]+)<\/CreatedAt>/);
+  const createdAt = createdMatch ? createdMatch[1] : new Date().toISOString();
+
+  // Split into DailyData blocks
+  const dailyBlocks = xml.match(/<DailyData>[\s\S]*?<\/DailyData>/g) ?? [];
+
+  for (const block of dailyBlocks) {
+    const dayMatch = block.match(/<Day>([^<]+)<\/Day>/);
+    if (!dayMatch) continue;
+    const date = dayMatch[1];
+
+    const hours: Array<{ hour: number; fuels: Record<string, number> }> = [];
+    const hourlyBlocks = block.match(/<HourlyData>[\s\S]*?<\/HourlyData>/g) ?? [];
+
+    for (const hb of hourlyBlocks) {
+      const hourMatch = hb.match(/<Hour>(\d+)<\/Hour>/);
+      if (!hourMatch) continue;
+      const hour = Number(hourMatch[1]);
+      const fuels: Record<string, number> = {};
+
+      const fuelBlocks = hb.match(/<FuelTotal>[\s\S]*?<\/FuelTotal>/g) ?? [];
+      for (const fb of fuelBlocks) {
+        const fuelMatch = fb.match(/<Fuel>([^<]+)<\/Fuel>/);
+        const outputMatch = fb.match(/<Output>(-?\d+(?:\.\d+)?)<\/Output>/);
+        if (fuelMatch && outputMatch) {
+          fuels[fuelMatch[1]] = Number(outputMatch[1]);
+        }
+      }
+      hours.push({ hour, fuels });
+    }
+    days.push({ date, hours });
+  }
+
+  return { deliveryYear, createdAt, days };
+}
+
+function processIesoXml(xmlPath: string, jsonDest: string): number {
+  const xml = readFileSync(xmlPath, "utf-8");
+  const parsed = parseIesoXml(xml);
+  writeFileSync(jsonDest, JSON.stringify(parsed));
+  return statSync(jsonDest).size;
+}
 
 // ---------------------------------------------------------------------------
 // Layout
@@ -129,15 +208,24 @@ const DATASETS: DatasetSpec[] = [
       if (yearly.length === 0) {
         throw new Error("No yearly XLSX resources found in CKAN listing.");
       }
-      const top = yearly[0];
-      return [
-        {
-          filename: `annual-energy-consumption-${top.year}.xlsx`,
-          source: top.r.url,
-          meta: { year: top.year, resourceName: top.r.name },
-        },
-      ];
+      return yearly.map(({ r, year }) => ({
+        filename: `annual-energy-consumption-${year}.xlsx`,
+        source: r.url,
+        meta: { year, resourceName: r.name },
+      }));
     },
+  },
+  {
+    key: "ieso",
+    label: "IESO Generator Output by Fuel Type (Hourly)",
+    resolve: async () => [
+      {
+        filename: "ieso-gen-output-hourly.xml",
+        source:
+          "https://reports-public.ieso.ca/public/GenOutputbyFuelHourly/PUB_GenOutputbyFuelHourly.xml",
+        meta: { publisher: "IESO", format: "xml" },
+      },
+    ],
   },
 ];
 
@@ -187,7 +275,22 @@ async function main() {
       }
       const bytes = statSync(dest).size;
       console.log(`    ✓ ${formatBytes(bytes)} written`);
-      manifest.entries[ds.key] = {
+
+      // Post-process IESO XML → compact JSON for the frontend.
+      if (file.filename.endsWith(".xml") && ds.key === "ieso") {
+        const jsonDest = dest.replace(/\.xml$/, ".json");
+        try {
+          const jsonBytes = processIesoXml(dest, jsonDest);
+          console.log(`    ✓ IESO JSON: ${formatBytes(jsonBytes)} → ${jsonDest.split("/").pop()}`);
+        } catch (err) {
+          console.error(`    ! IESO XML→JSON failed: ${(err as Error).message}`);
+        }
+      }
+
+      const manifestKey = file.meta?.year
+        ? `${ds.key}-${file.meta.year}`
+        : ds.key;
+      manifest.entries[manifestKey] = {
         path: `/data/${file.filename}`,
         source: file.source,
         bytes,
@@ -219,57 +322,32 @@ function ensureCurl(): void {
 /**
  * Stream a URL to disk using curl. Uses --fail so HTTP errors surface
  * as a non-zero exit, --location to follow redirects, --retry to
- * smooth over transient hiccups, and --continue-at to resume from a
- * prior partial when CKAN drops the connection mid-stream (which it
- * does often for the 600 MB Building Outlines resource).
+ * smooth over transient hiccups, and --output to write atomically.
  */
 function downloadWithCurl(url: string, dest: string): void {
   const tmp = `${dest}.partial`;
-  // Allow up to N retries with byte-range resume between attempts.
-  const MAX_ATTEMPTS = 6;
-  let lastError: unknown = null;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    try {
-      const args = [
-        "--show-error",
-        "--fail",
-        "--location",
-        "--retry",
-        "3",
-        "--retry-delay",
-        "2",
-        "--retry-all-errors",
-        "--connect-timeout",
-        "30",
-        // No --max-time: let big files run as long as they need.
-      ];
-      // Resume if a partial exists, otherwise start fresh.
-      if (existsSync(tmp) && statSync(tmp).size > 0) {
-        args.push("--continue-at", "-");
-      }
-      args.push("--output", tmp, url);
-      execFileSync("curl", args, { stdio: ["ignore", "inherit", "inherit"] });
-      lastError = null;
-      break;
-    } catch (err) {
-      lastError = err;
-      console.error(
-        `    · attempt ${attempt}/${MAX_ATTEMPTS} failed: ${
-          (err as Error).message.split("\n")[0]
-        }`
-      );
-      // Brief backoff before resuming.
-      const delaySec = Math.min(15, 2 * attempt);
-      try {
-        execFileSync("sleep", [String(delaySec)], { stdio: "ignore" });
-      } catch {
-        // sleep absent on minimal images — fall through.
-      }
-    }
-  }
-  if (lastError) {
-    throw lastError instanceof Error ? lastError : new Error(String(lastError));
-  }
+  if (existsSync(tmp)) rmSync(tmp);
+  execFileSync(
+    "curl",
+    [
+      "--silent",
+      "--show-error",
+      "--fail",
+      "--location",
+      "--retry",
+      "3",
+      "--retry-delay",
+      "2",
+      "--connect-timeout",
+      "20",
+      "--max-time",
+      "900",
+      "--output",
+      tmp,
+      url,
+    ],
+    { stdio: ["ignore", "inherit", "inherit"] }
+  );
   // Promote .partial → final atomically once curl is done.
   if (existsSync(dest)) rmSync(dest);
   renameSync(tmp, dest);

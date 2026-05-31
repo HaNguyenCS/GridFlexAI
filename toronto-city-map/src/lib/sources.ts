@@ -23,7 +23,7 @@ export function getDefaultSources(): StreamSource[] {
       name: "Built-in simulator",
       url: MOCK_URL,
       color: "#5cf2c8",
-      enabled: true,
+      enabled: false,
       tag: "Demo",
     },
   ];

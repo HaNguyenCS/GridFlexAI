@@ -17,6 +17,7 @@ import {
 import clsx from "clsx";
 import type { StreamEvent, GridStreamEvent } from "../lib/types";
 import { SEVERITY_LABELS } from "../lib/gridStreams";
+import type { GridWsStatus } from "../lib/gridWs";
 
 interface FeedItem extends StreamEvent {
   buildingLabel?: string;
@@ -37,6 +38,10 @@ interface Props {
   onToggleCollapse: () => void;
   /** Grid stream events to interleave in the feed. */
   gridItems?: GridFeedItem[];
+  /** WebSocket connection status from the grid simulation server. */
+  wsStatus?: GridWsStatus;
+  /** Total WS events received. */
+  wsEventCount?: number;
 }
 
 const KIND_META: Record<
@@ -65,7 +70,7 @@ const KIND_META: Record<
   },
 };
 
-export function EventFeed({ items, paused, onTogglePause, onFocus, onInjectAlert, collapsed, onToggleCollapse, gridItems = [] }: Props) {
+export function EventFeed({ items, paused, onTogglePause, onFocus, onInjectAlert, collapsed, onToggleCollapse, gridItems = [], wsStatus = "disconnected", wsEventCount = 0 }: Props) {
   // Merge building events and grid events, sorted by arrival time desc.
   const merged = useMemo(() => {
     type MixedItem =
@@ -82,56 +87,69 @@ export function EventFeed({ items, paused, onTogglePause, onFocus, onInjectAlert
 
   return (
     <section
-      className="pointer-events-auto absolute bottom-6 right-6 z-10 flex w-[360px] max-w-[calc(100vw-3rem)] flex-col overflow-hidden rounded-[14px] border border-[var(--color-ink-3)] bg-[color-mix(in_oklch,var(--color-ink-1)_88%,transparent)] backdrop-blur-xl transition-all duration-300 ease-in-out"
+      className={clsx(
+        "pointer-events-auto absolute bottom-6 right-6 z-10 flex flex-col overflow-hidden rounded-[14px] bg-[color-mix(in_oklch,var(--color-ink-1)_88%,transparent)] backdrop-blur-xl transition-all duration-300 ease-in-out",
+        collapsed ? "w-auto border-0 p-3" : "w-[360px] max-w-[calc(100vw-3rem)] border border-[var(--color-ink-3)]"
+      )}
       aria-label="Live event feed"
     >
-      <header className="flex items-center justify-between gap-3 border-b border-[var(--color-ink-3)] px-4 py-3">
-        <div className="flex items-center gap-2.5">
-          <span className="grid h-6 w-6 place-items-center rounded-md bg-[color-mix(in_oklch,var(--color-accent)_18%,var(--color-ink-2))]">
-            <Broadcast size={13} weight="bold" className="text-[var(--color-accent)]" />
+      {collapsed ? (
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          title="Expand feed"
+          className="flex h-9 items-center gap-2 rounded-full border-0 bg-[color-mix(in_oklch,var(--color-ink-1)_82%,transparent)] px-3 text-[12px] text-[var(--color-ink-7)] backdrop-blur-md transition-all hover:text-[var(--color-ink-8)] hover:bg-[color-mix(in_oklch,var(--color-ink-1)_92%,transparent)] active:translate-y-[1px]"
+        >
+          <Broadcast size={13} weight="bold" />
+          <span className="font-mono text-[10px] uppercase tracking-[0.18em]">
+            Feed
           </span>
-          <span className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-[var(--color-ink-6)]">
-            Stream feed
-          </span>
-        </div>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={onInjectAlert}
-            className="grid h-7 w-7 place-items-center rounded-md text-[var(--color-ink-6)] transition-colors hover:bg-[var(--color-ink-2)] hover:text-[var(--color-alert)] active:translate-y-px"
-            title="Inject test alert"
-          >
-            <Warning size={14} weight="bold" />
-          </button>
-          <button
-            type="button"
-            onClick={onTogglePause}
-            className="grid h-7 w-7 place-items-center rounded-md text-[var(--color-ink-6)] transition-colors hover:bg-[var(--color-ink-2)] hover:text-[var(--color-ink-8)] active:translate-y-px"
-            title={paused ? "Resume stream" : "Pause stream"}
-          >
-            {paused ? (
-              <PlayCircle size={16} weight="bold" />
-            ) : (
-              <PauseCircle size={16} weight="bold" />
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={onToggleCollapse}
-            className="grid h-7 w-7 place-items-center rounded-md text-[var(--color-ink-6)] transition-colors hover:bg-[var(--color-ink-2)] hover:text-[var(--color-ink-8)] active:translate-y-px"
-            title={collapsed ? "Expand feed" : "Collapse feed"}
-          >
-            {collapsed ? (
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
-            ) : (
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>
-            )}
-          </button>
-        </div>
-      </header>
+        </button>
+      ) : (
+        <>
+          <header className="flex items-center justify-between gap-3 border-b border-[var(--color-ink-3)] px-4 py-3">
+            <div className="flex items-center gap-2.5">
+              <span className="grid h-6 w-6 place-items-center rounded-md bg-[color-mix(in_oklch,var(--color-accent)_18%,var(--color-ink-2))]">
+                <Broadcast size={13} weight="bold" className="text-[var(--color-accent)]" />
+              </span>
+              <span className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-[var(--color-ink-6)]">
+                Stream feed
+              </span>
+              <WsStatusPill status={wsStatus} eventCount={wsEventCount} />
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={onInjectAlert}
+                className="grid h-7 w-7 place-items-center rounded-md text-[var(--color-ink-6)] transition-colors hover:bg-[var(--color-ink-2)] hover:text-[var(--color-alert)] active:translate-y-px"
+                title="Inject test alert"
+              >
+                <Warning size={14} weight="bold" />
+              </button>
+              <button
+                type="button"
+                onClick={onTogglePause}
+                className="grid h-7 w-7 place-items-center rounded-md text-[var(--color-ink-6)] transition-colors hover:bg-[var(--color-ink-2)] hover:text-[var(--color-ink-8)] active:translate-y-px"
+                title={paused ? "Resume stream" : "Pause stream"}
+              >
+                {paused ? (
+                  <PlayCircle size={16} weight="bold" />
+                ) : (
+                  <PauseCircle size={16} weight="bold" />
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={onToggleCollapse}
+                className="grid h-7 w-7 place-items-center rounded-md text-[var(--color-ink-6)] transition-colors hover:bg-[var(--color-ink-2)] hover:text-[var(--color-ink-8)] active:translate-y-px"
+                title="Collapse feed"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>
+              </button>
+            </div>
+          </header>
 
-      {!collapsed && (
-        <ol className="flex max-h-[360px] flex-col divide-y divide-[var(--color-ink-2)] overflow-y-auto">
+          <ol className="flex max-h-[360px] flex-col divide-y divide-[var(--color-ink-2)] overflow-y-auto">
           {merged.length === 0 ? (
             <li className="px-4 py-10 text-center text-[12.5px] text-[var(--color-ink-5)]">
               Waiting for the first event<span className="ml-1">…</span>
@@ -225,6 +243,7 @@ export function EventFeed({ items, paused, onTogglePause, onFocus, onInjectAlert
             })
           )}
         </ol>
+        </>
       )}
     </section>
   );
@@ -241,3 +260,38 @@ function timeOf(ts: string): string {
 }
 
 export type { FeedItem, GridFeedItem };
+
+// ── WS connection status pill ──────────────────────────────────────────────
+
+const WS_STATUS_META: Record<
+  GridWsStatus,
+  { label: string; dotColor: string; bgColor: string }
+> = {
+  live:         { label: "WS live",    dotColor: "#22c55e", bgColor: "rgba(34,197,94,0.12)" },
+  connecting:   { label: "WS…",       dotColor: "#eab308", bgColor: "rgba(234,179,8,0.12)" },
+  error:        { label: "WS err",    dotColor: "#ef4444", bgColor: "rgba(239,68,68,0.12)" },
+  disconnected: { label: "WS off",    dotColor: "#6b7280", bgColor: "rgba(107,114,128,0.12)" },
+};
+
+function WsStatusPill({ status, eventCount }: { status: GridWsStatus; eventCount: number }) {
+  const meta = WS_STATUS_META[status];
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-mono text-[9.5px] uppercase tracking-[0.16em]"
+      style={{ backgroundColor: meta.bgColor, color: meta.dotColor }}
+      title={`Grid WS: ${meta.label} · ${eventCount} events received`}
+    >
+      <span
+        className="inline-block h-1.5 w-1.5 rounded-full"
+        style={{
+          backgroundColor: meta.dotColor,
+          boxShadow: status === "live" ? `0 0 4px ${meta.dotColor}` : "none",
+        }}
+      />
+      {meta.label}
+      {eventCount > 0 && (
+        <span className="tabular-nums opacity-70">{eventCount}</span>
+      )}
+    </span>
+  );
+}

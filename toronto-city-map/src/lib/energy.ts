@@ -36,15 +36,14 @@ const PACKAGE_SHOW_URL =
  */
 const LOCAL_MANIFEST_URL = "/data/manifest.json";
 
+interface LocalManifestEntry {
+  path?: string;
+  source?: string;
+  meta?: { year?: number; resourceName?: string };
+}
+
 interface LocalManifest {
-  entries?: Record<
-    string,
-    {
-      path?: string;
-      source?: string;
-      meta?: { year?: number; resourceName?: string };
-    }
-  >;
+  entries?: Record<string, LocalManifestEntry>;
 }
 
 /** Result of a successful fetch + parse. */
@@ -159,7 +158,9 @@ async function tryLocalEnergy(
     const res = await fetch(LOCAL_MANIFEST_URL, { signal });
     if (!res.ok) return null;
     const manifest = (await res.json()) as LocalManifest;
-    const entry = manifest.entries?.energy;
+    // Prefer the newest year when the manifest stores per-year keys
+    // (e.g. "energy-2024"). Fall back to the legacy single "energy" key.
+    const entry = pickLatestEnergyEntry(manifest.entries);
     if (!entry?.path) return null;
     const xlsx = await fetch(entry.path, { signal });
     if (!xlsx.ok) return null;
@@ -182,6 +183,35 @@ async function tryLocalEnergy(
     if ((err as { name?: string })?.name === "AbortError") throw err;
     return null;
   }
+}
+
+/**
+ * Find the most recent energy entry in the manifest. Supports both
+ * the per-year keys written by the current prefetch (`energy-2024`)
+ * and the legacy flat `energy` key.
+ */
+function pickLatestEnergyEntry(
+  entries: LocalManifest["entries"]
+): LocalManifestEntry | null {
+  if (!entries) return null;
+  // Collect all energy entries and sort by year descending.
+  const candidates: Array<{
+    key: string;
+    year: number;
+    entry: LocalManifestEntry;
+  }> = [];
+  for (const [key, entry] of Object.entries(entries)) {
+    if (key === "energy" || key.startsWith("energy-")) {
+      const year =
+        typeof entry.meta?.year === "number"
+          ? entry.meta.year
+          : extractYear(entry.meta?.resourceName) ?? 0;
+      candidates.push({ key, year, entry });
+    }
+  }
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.year - a.year);
+  return candidates[0].entry;
 }
 
 /** Pull a 4-digit year out of a CKAN resource name like `*-data-2023`. */
@@ -521,6 +551,262 @@ export function formatKWh(kwh: number): string {
   if (kwh >= 1_000_000) return `${(kwh / 1_000_000).toFixed(1)} GWh`;
   if (kwh >= 1_000) return `${(kwh / 1_000).toFixed(1)} MWh`;
   return `${Math.round(kwh).toLocaleString()} kWh`;
+}
+
+// ---------------------------------------------------------------------------
+// Energy GeoJSON — real building-level consumption from City of Toronto
+// ---------------------------------------------------------------------------
+//
+// The 2024 geojson ships Point features with actual metered consumption
+// per city-owned building. We render these as coloured circles on the
+// map so users see real data rather than model-derived estimates.
+
+const LOCAL_ENERGY_GEOJSON_URL = "/data/annual-energy-consumption-2024.geojson";
+
+/** Single feature from the energy consumption geojson. */
+export interface EnergyGeoFeature {
+  /** WGS84 coordinates [lng, lat]. */
+  coordinates: [number, number];
+  /** Building / facility name. */
+  name: string;
+  /** Operation type (e.g. "Library", "Fire Hall"). */
+  operationType: string;
+  /** Street address. */
+  address: string;
+  /** City (Toronto, Scarborough, etc.). */
+  city: string;
+  /** Reporting year. */
+  year: number;
+  /** Total electricity consumption, kWh. */
+  electricityKWh: number;
+  /** Natural gas consumption, m³. */
+  naturalGasM3: number;
+  /** Natural gas in kWh-equivalent. */
+  naturalGasKWhEq: number;
+  /** Combined energy consumption, kWh. */
+  totalEnergyKWh: number;
+  /** Floor area, square metres. */
+  floorAreaSqM: number;
+  /** Energy intensity, kWh per square metre. */
+  intensityKWhPerSqM: number;
+  /** Normalised intensity in [0,1] for colour mapping. */
+  normalised: number;
+}
+
+/** Result of fetching + parsing the energy geojson. */
+export interface EnergyGeoDataset {
+  /** Reporting year. */
+  year: number;
+  /** Number of features with valid geometry. */
+  featureCount: number;
+  /** Total energy consumption across all features, kWh. */
+  totalEnergyKWh: number;
+  /** Total electricity consumption, kWh. */
+  totalElectricityKWh: number;
+  /** Total natural gas (kWh-equivalent). */
+  totalGasKWhEq: number;
+  /** P5 intensity for colour ramp domain. */
+  intensityP5: number;
+  /** P95 intensity for colour ramp domain. */
+  intensityP95: number;
+  /** P5 total energy for colour ramp domain. */
+  energyP5: number;
+  /** P95 total energy for colour ramp domain. */
+  energyP95: number;
+  /** Parsed features ready for rendering. */
+  features: EnergyGeoFeature[];
+}
+
+/**
+ * Fetch the 2024 energy consumption geojson from the local server.
+ * Returns null on any failure.
+ */
+export async function fetchEnergyGeoJSON(opts?: {
+  signal?: AbortSignal;
+}): Promise<EnergyGeoDataset | null> {
+  try {
+    const res = await fetch(LOCAL_ENERGY_GEOJSON_URL, { signal: opts?.signal });
+    if (!res.ok) {
+      console.warn(`Energy geojson HTTP ${res.status}`);
+      return null;
+    }
+    const geojson = (await res.json()) as {
+      type?: string;
+      features?: Array<{
+        type: string;
+        geometry: { type: string; coordinates: number[] } | null;
+        properties: Record<string, unknown>;
+      }>;
+    };
+    if (
+      !geojson ||
+      geojson.type !== "FeatureCollection" ||
+      !Array.isArray(geojson.features)
+    ) {
+      console.warn("Energy geojson: invalid FeatureCollection");
+      return null;
+    }
+    return parseEnergyGeoJSON(geojson.features);
+  } catch (err) {
+    if ((err as { name?: string })?.name === "AbortError") throw err;
+    console.warn("Energy geojson fetch failed:", err);
+    return null;
+  }
+}
+
+function parseEnergyGeoJSON(
+  rawFeatures: Array<{
+    type: string;
+    geometry: { type: string; coordinates: number[] } | null;
+    properties: Record<string, unknown>;
+  }>
+): EnergyGeoDataset | null {
+  const features: EnergyGeoFeature[] = [];
+  const intensities: number[] = [];
+  const energies: number[] = [];
+  let totalEnergyKWh = 0;
+  let totalElectricityKWh = 0;
+  let totalGasKWhEq = 0;
+  let year = 2024;
+
+  for (const f of rawFeatures) {
+    if (!f.geometry || f.geometry.type !== "Point") continue;
+    const coords = f.geometry.coordinates;
+    if (!coords || coords.length < 2) continue;
+    const p = f.properties;
+    const intensity = toNumber(p.intensityKWhPerSqM);
+    const totalEnergy = toNumber(p.totalEnergyKWh);
+    const elec = toNumber(p.electricityKWh);
+    const gasEq = toNumber(p.naturalGasKWhEq);
+    const floorArea = toNumber(p.floorAreaSqM);
+    if (!totalEnergy && !intensity) continue;
+
+    const yr = toNumber(p.year);
+    if (yr > 0) year = yr;
+
+    features.push({
+      coordinates: [coords[0], coords[1]],
+      name: String(p.name ?? ""),
+      operationType: String(p.operationType ?? ""),
+      address: String(p.address ?? ""),
+      city: String(p.city ?? ""),
+      year: yr || year,
+      electricityKWh: elec,
+      naturalGasM3: toNumber(p.naturalGasM3),
+      naturalGasKWhEq: gasEq,
+      totalEnergyKWh: totalEnergy,
+      floorAreaSqM: floorArea,
+      intensityKWhPerSqM: intensity,
+      normalised: 0, // filled in below
+    });
+
+    totalEnergyKWh += totalEnergy;
+    totalElectricityKWh += elec;
+    totalGasKWhEq += gasEq;
+    if (intensity > 0) intensities.push(intensity);
+    if (totalEnergy > 0) energies.push(totalEnergy);
+  }
+
+  if (features.length === 0) return null;
+
+  // Compute P5/P95 for both intensity and total energy.
+  intensities.sort((a, b) => a - b);
+  energies.sort((a, b) => a - b);
+  const iP5 = percentile(intensities, 0.05);
+  const iP95 = percentile(intensities, 0.95);
+  const eP5 = percentile(energies, 0.05);
+  const eP95 = percentile(energies, 0.95);
+
+  // Normalise intensity into [0,1] using P5..P95 domain.
+  const iSpan = Math.max(1, iP95 - iP5);
+  for (const f of features) {
+    f.normalised = Math.max(
+      0,
+      Math.min(1, (f.intensityKWhPerSqM - iP5) / iSpan)
+    );
+  }
+
+  return {
+    year,
+    featureCount: features.length,
+    totalEnergyKWh,
+    totalElectricityKWh,
+    totalGasKWhEq,
+    intensityP5: iP5,
+    intensityP95: iP95,
+    energyP5: eP5,
+    energyP95: eP95,
+    features,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Spatial matching — map energy points onto building footprints
+// ---------------------------------------------------------------------------
+//
+// The energy geojson has Point geometries while the rendered buildings
+// are polygons. To colour the actual building polygon when it overlaps
+// with a real energy consumption reading, we match each energy point
+// to the nearest building whose centroid is within a threshold distance.
+
+/** Max distance in degrees (~150 m at Toronto latitude). */
+const MATCH_THRESHOLD_DEG = 0.0014;
+
+/**
+ * Build an index mapping building.id → EnergyGeoFeature for every
+ * building whose centroid falls within `MATCH_THRESHOLD_DEG` of an
+ * energy point. When multiple energy points match the same building
+ * the highest-intensity reading wins (city halls etc. can have
+ * multiple meters).
+ */
+export function matchEnergyToBuildings(
+  buildings: Building[],
+  geo: EnergyGeoDataset
+): Map<string, EnergyGeoFeature> {
+  const index = new Map<string, EnergyGeoFeature>();
+  if (buildings.length === 0 || geo.features.length === 0) return index;
+
+  // Pre-compute building centroids.
+  const centroids: Array<{ id: string; lng: number; lat: number }> = [];
+  for (const b of buildings) {
+    const [lng, lat] = ringCentroidSimple(b.contour);
+    centroids.push({ id: b.id, lng, lat });
+  }
+
+  for (const ef of geo.features) {
+    const [eLng, eLat] = ef.coordinates;
+    let bestId: string | null = null;
+    let bestDist = Infinity;
+    for (const c of centroids) {
+      const dLng = c.lng - eLng;
+      const dLat = c.lat - eLat;
+      const dist = dLng * dLng + dLat * dLat;
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestId = c.id;
+      }
+    }
+    if (bestId && Math.sqrt(bestDist) < MATCH_THRESHOLD_DEG) {
+      const prev = index.get(bestId);
+      // Keep the highest-intensity match per building.
+      if (!prev || ef.intensityKWhPerSqM > prev.intensityKWhPerSqM) {
+        index.set(bestId, ef);
+      }
+    }
+  }
+  return index;
+}
+
+function ringCentroidSimple(ring: LngLat[]): LngLat {
+  let lng = 0;
+  let lat = 0;
+  const n = ring.length - 1;
+  if (n <= 0) return [0, 0];
+  for (let i = 0; i < n; i++) {
+    lng += ring[i][0];
+    lat += ring[i][1];
+  }
+  return [lng / n, lat / n];
 }
 
 // Re-export `LngLat` so callers don't need to plumb types.ts directly.

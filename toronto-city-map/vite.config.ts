@@ -17,6 +17,7 @@ function serveServerData(): PluginOption {
     ".json": "application/json",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".csv": "text/csv",
+    ".xml": "application/xml",
     ".txt": "text/plain; charset=utf-8",
   };
   const send404 = (res: ServerResponse) => {

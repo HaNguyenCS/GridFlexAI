@@ -45,6 +45,16 @@ interface ProjectedCallout {
   bend: number;
 }
 
+interface ExitingCallout {
+  id: string;
+  panel: { x: number; y: number };
+  anchor: { x: number; y: number };
+  bend: number;
+  overlay: BuildingOverlay;
+  building: Building;
+  hex: string;
+}
+
 const DEFAULT_MAX = 6;
 
 export function AnnotationOverlays({
@@ -58,6 +68,87 @@ export function AnnotationOverlays({
   maxVisible = DEFAULT_MAX,
   onFocus,
 }: Props) {
+  const [exitingCallouts, setExitingCallouts] = useState<Map<string, ExitingCallout>>(new Map());
+  const prevOverlayIdsRef = useRef<Set<string>>(new Set());
+
+  // Detect removed overlays and schedule them for fade-out
+  useEffect(() => {
+    const currentIds = new Set(overlays.map((o) => o.buildingId));
+    const prevIds = prevOverlayIdsRef.current;
+
+    // Find overlays that were removed
+    const removedIds = new Set<string>();
+    for (const id of prevIds) {
+      if (!currentIds.has(id)) {
+        removedIds.add(id);
+      }
+    }
+
+    // Add removed overlays to exit animation queue
+    if (removedIds.size > 0) {
+      setExitingCallouts((prev) => {
+        const next = new Map(prev);
+        for (const id of removedIds) {
+          // Find the overlay in our previous render to get its position
+          // We'll need to reconstruct from current state if possible
+          const overlay = overlays.find((o) => o.buildingId === id);
+          if (overlay) {
+            const building = buildingsById.get(overlay.buildingId);
+            if (building) {
+              const [clng, clat] = centroid(building.contour);
+              try {
+                const viewport = new WebMercatorViewport({
+                  width,
+                  height,
+                  longitude: viewState.longitude,
+                  latitude: viewState.latitude,
+                  zoom: viewState.zoom,
+                  pitch: viewState.pitch,
+                  bearing: viewState.bearing,
+                });
+                const [ax, ay] = viewport.project([clng, clat, building.height]);
+                const offset = staggerOffset(overlay.buildingId);
+                let px = ax + offset.dx;
+                let py = ay + offset.dy;
+                const gutterX = 16;
+                const gutterY = 12;
+                const cardW = 220;
+                const cardH = 64;
+                px = Math.max(gutterX, Math.min(width - cardW - gutterX, px));
+                py = Math.max(gutterY, Math.min(height - cardH - gutterY, py));
+
+                next.set(id, {
+                  id,
+                  panel: { x: px, y: py },
+                  anchor: { x: ax, y: ay },
+                  bend: offset.bend,
+                  overlay,
+                  building,
+                  hex: overlay.hex ?? "#7ad4ff",
+                });
+              } catch {
+                // Skip if projection fails
+              }
+            }
+          }
+        }
+        return next;
+      });
+
+      // Clean up after fade-out animation completes (400ms)
+      setTimeout(() => {
+        setExitingCallouts((prev) => {
+          const next = new Map(prev);
+          for (const id of removedIds) {
+            next.delete(id);
+          }
+          return next;
+        });
+      }, 400);
+    }
+
+    prevOverlayIdsRef.current = currentIds;
+  }, [overlays, buildingsById, width, height, viewState]);
   const viewport = useMemo(() => {
     if (width <= 0 || height <= 0) return null;
     try {
@@ -159,6 +250,9 @@ export function AnnotationOverlays({
         {callouts.map((c) => (
           <CalloutArrow key={c.overlay.buildingId} c={c} />
         ))}
+        {Array.from(exitingCallouts.values()).map((c) => (
+          <ExitingCalloutArrow key={`exit-${c.id}`} c={c} />
+        ))}
       </svg>
 
       {callouts.map((c) => (
@@ -167,6 +261,9 @@ export function AnnotationOverlays({
           c={c}
           onFocus={onFocus}
         />
+      ))}
+      {Array.from(exitingCallouts.values()).map((c) => (
+        <ExitingCalloutChip key={`exit-${c.id}`} c={c} />
       ))}
     </div>
   );
@@ -373,4 +470,115 @@ function computeTtlPct(o: BuildingOverlay): number {
   const total = o.ttlMs;
   const remaining = Math.max(0, o.expiresAt - now);
   return Math.max(0, Math.min(100, (remaining / total) * 100));
+}
+
+// ---------------------------------------------------------------------------
+// Exit animations — fading out callouts
+// ---------------------------------------------------------------------------
+
+function ExitingCalloutArrow({ c }: { c: ExitingCallout }) {
+  const color = c.hex;
+  const ax = c.anchor.x;
+  const ay = c.anchor.y;
+  const cardW = 220;
+  const cardH = 64;
+  const cx = c.panel.x + cardW / 2;
+  const cy = c.panel.y + cardH;
+  const midX = (ax + cx) / 2 + c.bend;
+  const midY = (ay + cy) / 2 - 18;
+  const path = `M ${cx} ${cy} Q ${midX} ${midY} ${ax} ${ay}`;
+
+  return (
+    <g className="callout-arrow-exit" style={{ ["--callout-color" as never]: color }}>
+      <path
+        d={path}
+        fill="none"
+        stroke={color}
+        strokeOpacity="0.22"
+        strokeWidth="6"
+        strokeLinecap="round"
+        filter="url(#callout-glow)"
+      />
+      <path
+        d={path}
+        fill="none"
+        stroke={color}
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        pathLength={1}
+      />
+      <circle cx={ax} cy={ay} r={3.2} fill={color} />
+      <circle
+        cx={ax}
+        cy={ay}
+        r={6}
+        fill="none"
+        stroke={color}
+        strokeOpacity="0.55"
+        strokeWidth="1"
+      />
+    </g>
+  );
+}
+
+function ExitingCalloutChip({ c }: { c: ExitingCallout }) {
+  const color = c.hex;
+  const label = KIND_LABEL[c.overlay.kind];
+  const sevPct = Math.round(100 * Math.max(0, Math.min(1, c.overlay.severity ?? 0.4)));
+
+  return (
+    <div
+      className="callout-chip-exit pointer-events-auto absolute"
+      style={{
+        transform: `translate3d(${c.panel.x}px, ${c.panel.y}px, 0)`,
+        width: 220,
+      }}
+    >
+      <div
+        className="callout-chip-inner-exit relative overflow-hidden rounded-[10px] border bg-[color-mix(in_oklch,var(--color-ink-0)_82%,transparent)] backdrop-blur-xl"
+        style={{
+          borderColor: `color-mix(in oklch, ${color} 40%, var(--color-ink-3))`,
+          boxShadow: `0 8px 24px -10px color-mix(in oklch, ${color} 30%, transparent)`,
+        }}
+      >
+        <button
+          type="button"
+          className="flex w-full items-start gap-2 px-3 py-2.5 text-left"
+        >
+          <span
+            className="mt-[3px] grid h-[14px] w-[14px] shrink-0 place-items-center rounded-full"
+            style={{
+              backgroundColor: `color-mix(in oklch, ${color} 18%, var(--color-ink-1))`,
+              border: `1px solid color-mix(in oklch, ${color} 60%, transparent)`,
+            }}
+          >
+            <span
+              className="h-[5px] w-[5px] rounded-full"
+              style={{ backgroundColor: color }}
+            />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline gap-2">
+              <span
+                className="font-mono text-[9.5px] uppercase tracking-[0.22em]"
+                style={{ color }}
+              >
+                {label}
+              </span>
+              <span className="truncate font-mono text-[9.5px] tabular-nums text-[var(--color-ink-5)]">
+                {labelOrId(c.building)}
+              </span>
+            </div>
+            <p className="mt-0.5 line-clamp-2 text-[12px] leading-snug text-[var(--color-ink-8)]">
+              {c.overlay.note ?? "—"}
+            </p>
+            <div className="mt-1 flex items-center justify-between font-mono text-[10px] tabular-nums text-[var(--color-ink-5)]">
+              <span>{Math.round(c.building.height)} m</span>
+              <span>sev · {sevPct}%</span>
+            </div>
+          </div>
+        </button>
+      </div>
+    </div>
+  );
 }

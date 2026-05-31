@@ -20,6 +20,7 @@ import type {
   StreamEventKind,
 } from "./types";
 import { hexToRgba } from "./stream";
+import { getPalette, interpolatePalette } from "./heightPalettes";
 
 const KIND_DEFAULT_TTL: Record<StreamEventKind, number> = {
   highlight: 5500,
@@ -117,37 +118,27 @@ export const BASE_OUTLINE: [number, number, number, number] = [88, 110, 138, 110
 export const HOVER_OUTLINE: [number, number, number, number] = [120, 240, 220, 235];
 
 /**
- * Compute a height-encoded fill colour. Goes from a cool deep-blue at
- * low elevations to a warmer near-white at the tallest peaks. We bias
- * the curve so most mid-rises sit in the cooler bucket and only the
+ * Compute a height-encoded fill colour using the selected palette.
+ * Goes through 3 color stops: low (short), mid (mid-rise), high (tall).
+ * We bias the curve so most mid-rises sit in the cooler bucket and only the
  * skyline anchors get the hot end.
  */
-export function heightToColor(h: number): [number, number, number, number] {
+export function heightToColor(
+  h: number,
+  paletteId = 'elevation'
+): [number, number, number, number] {
   const t = Math.min(1, Math.pow(h / 320, 0.85));
-  // Three-stop ramp: deep-ink → teal-grey → near-white-warm
-  const stops = [
-    [32, 46, 64],
-    [78, 124, 138],
-    [212, 226, 220],
-  ];
-  const idx = t < 0.5 ? 0 : 1;
-  const local = idx === 0 ? t * 2 : (t - 0.5) * 2;
-  const a = stops[idx];
-  const b = stops[idx + 1];
-  return [
-    Math.round(a[0] + (b[0] - a[0]) * local),
-    Math.round(a[1] + (b[1] - a[1]) * local),
-    Math.round(a[2] + (b[2] - a[2]) * local),
-    230,
-  ];
+  const palette = getPalette(paletteId);
+  return interpolatePalette(t, palette);
 }
 
 export function pickFill(
   building: Building,
-  overlay: BuildingOverlay | undefined
+  overlay: BuildingOverlay | undefined,
+  paletteId = 'elevation'
 ): [number, number, number, number] {
   if (overlay?.color) return overlay.color;
-  return heightToColor(building.height);
+  return heightToColor(building.height, paletteId);
 }
 
 export function pickLineColor(

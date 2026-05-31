@@ -25,6 +25,8 @@ export interface StreamHandle {
   /** Pause/resume the simulator (no-op for real WS). */
   pause: () => void;
   resume: () => void;
+  /** Set the speed multiplier for the mock simulator (no-op for real WS). */
+  setSpeed: (multiplier: number) => void;
 }
 
 export interface StreamCallbacks {
@@ -126,6 +128,9 @@ function startWebSocket(
     resume: () => {
       mockFallback?.resume();
     },
+    setSpeed: (m) => {
+      mockFallback?.setSpeed(m);
+    },
   };
 }
 
@@ -170,6 +175,7 @@ function startMockSimulator(
   let timer: ReturnType<typeof setTimeout> | null = null;
   let paused = false;
   let closed = false;
+  let speed = 1;
 
   cb.onStatus("connecting");
   setTimeout(() => {
@@ -211,7 +217,8 @@ function startMockSimulator(
       };
       cb.onEvent(e);
     }
-    const next = 280 + Math.random() * 700; // 280–980 ms cadence
+    const s = speed || 1;
+    const next = (280 + Math.random() * 700) / s; // 280–980 ms cadence, scaled by speed
     timer = setTimeout(tick, next);
   };
   timer = setTimeout(tick, 600);
@@ -227,6 +234,9 @@ function startMockSimulator(
     },
     resume: () => {
       paused = false;
+    },
+    setSpeed: (m) => {
+      speed = m;
     },
   };
 }
@@ -277,6 +287,8 @@ export interface MultiStreamHandle {
   inject: (e: StreamEvent) => void;
   /** Tear down every handle and release timers. */
   close: () => void;
+  /** Set the speed multiplier for all mock simulators. */
+  setSpeed: (multiplier: number) => void;
 }
 
 export function createMultiStream(
@@ -339,6 +351,9 @@ export function createMultiStream(
     },
     inject(e: StreamEvent) {
       cb.onEvent(e);
+    },
+    setSpeed(m: number) {
+      for (const h of handles.values()) h.setSpeed(m);
     },
     close() {
       closed = true;
