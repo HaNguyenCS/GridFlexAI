@@ -27,6 +27,7 @@ from backend.schemas.simulation import (
 from backend.simulation.feature_builder import build_from_simulator, build_snapshot_meta
 from backend.simulation.kepler_export import build_kepler_flows, build_kepler_nodes
 from backend.simulation.system_predictor import predict_grid_stress
+from backend.simulation.normal_demo_shaper import shape_result
 
 logger = logging.getLogger(__name__)
 
