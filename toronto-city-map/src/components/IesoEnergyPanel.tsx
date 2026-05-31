@@ -26,7 +26,7 @@ interface Props {
 }
 
 export function IesoEnergyPanel({ dataset }: Props) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
 
   const currentHour = useMemo(() => getCurrentHourData(dataset), [dataset]);
   const currentTotal = useMemo(() => {
