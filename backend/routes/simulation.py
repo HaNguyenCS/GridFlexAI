@@ -9,9 +9,21 @@ from fastapi import APIRouter, HTTPException
 from backend.agents.grid_forecast_agent import grid_forecast_agent
 from backend.agents.market_clearing_agent import market_clearing_agent
 from backend.agents.nim_client import nim_client
+from backend.agents.nemoclaw_client import nemoclaw_client
 from backend.agents.reporter_agent import reporter_agent
 from backend.agents.ward_agent import collect_ward_bids
-from backend.config import AGENT_MODE, NIM_BASE_URL, NIM_MODEL, REPORTER_MODE
+from backend.clients.ml_service_client import ml_service_client
+from backend.config import (
+    AGENT_MODE,
+    ML_SERVICE_URL,
+    NEMOCLAW_AGENT_ID,
+    NEMOCLAW_GATEWAY_URL,
+    NEMOCLAW_OPENCLAW_BIN,
+    NEMOCLAW_SESSION_ID,
+    NIM_BASE_URL,
+    NIM_MODEL,
+    REPORTER_MODE,
+)
 from backend.schemas.simulation import (
     GridMockSnapshot,
     GridPredictRequest,
@@ -67,6 +79,16 @@ def init_router(simulator) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @router.get("/agent/ml/health")
+    async def agent_ml_health():
+        ml = await ml_service_client.health_check()
+        return {
+            "agent_mode": AGENT_MODE,
+            "reporter_mode": REPORTER_MODE,
+            "ml_service_url": ML_SERVICE_URL,
+            "ml": ml,
+        }
+
     @router.get("/agent/nim/health")
     async def agent_nim_health():
         nim = await nim_client.health_check()
@@ -76,6 +98,19 @@ def init_router(simulator) -> APIRouter:
             "nim_base_url": NIM_BASE_URL,
             "nim_model": NIM_MODEL,
             "nim": nim,
+        }
+
+    @router.get("/agent/nemoclaw/health")
+    async def agent_nemoclaw_health():
+        nc = await nemoclaw_client.health_check()
+        return {
+            "agent_mode": AGENT_MODE,
+            "reporter_mode": REPORTER_MODE,
+            "openclaw_bin": NEMOCLAW_OPENCLAW_BIN,
+            "nemoclaw_agent_id": NEMOCLAW_AGENT_ID,
+            "nemoclaw_session_id": NEMOCLAW_SESSION_ID,
+            "gateway_url": NEMOCLAW_GATEWAY_URL,
+            "nemoclaw": nc,
         }
 
     @router.post("/agent/report")

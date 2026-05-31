@@ -10,7 +10,12 @@ from pydantic import BaseModel, Field
 
 from backend.config import (
     AGENT_MODE,
+    HISTORICAL_PLAYBACK_START_INDEX,
     LLM_STREAM_INTERVAL_SEC,
+    ML_SERVICE_URL,
+    NEMOCLAW_AGENT_ID,
+    OFFLINE_MODE,
+    NEMOCLAW_STREAM_INTERVAL_SEC,
     NIM_MODEL,
     REPORTER_MODE,
     STREAM_INTERVAL_SEC,
@@ -24,14 +29,23 @@ from backend.simulation.pipeline import run_simulation_from_simulator, to_tick_m
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-if AGENT_MODE == "llm":
+if AGENT_MODE == "nemoclaw":
+    from backend.agents.nemoclaw_supply_agent import NemoClawSupplyAgent
+
+    simulator = WardStreamSimulator(supply_budget=SUPPLY_BUDGET, supply_agent=NemoClawSupplyAgent())
+elif AGENT_MODE == "llm":
     from backend.agents.llm_supply_agent import LLMSupplyAgent
 
     simulator = WardStreamSimulator(supply_budget=SUPPLY_BUDGET, supply_agent=LLMSupplyAgent())
 else:
     simulator = WardStreamSimulator(supply_budget=SUPPLY_BUDGET)
 
-SIM_TICK_SEC = LLM_STREAM_INTERVAL_SEC if AGENT_MODE == "llm" else STREAM_INTERVAL_SEC
+if AGENT_MODE == "nemoclaw":
+    SIM_TICK_SEC = NEMOCLAW_STREAM_INTERVAL_SEC
+elif AGENT_MODE == "llm":
+    SIM_TICK_SEC = LLM_STREAM_INTERVAL_SEC
+else:
+    SIM_TICK_SEC = STREAM_INTERVAL_SEC
 demand_clients: set[WebSocket] = set()
 supply_clients: set[WebSocket] = set()
 trades_clients: set[WebSocket] = set()
@@ -131,6 +145,31 @@ app.add_middleware(
 app.include_router(init_router(simulator))
 
 
+@app.get("/")
+def root():
+    """API has no UI — dashboard runs on Vite (port 5174)."""
+    return {
+        "service": "gridflex-simulation-backend",
+        "agent_mode": AGENT_MODE,
+        "dashboard": "http://localhost:5174",
+        "health": "/health",
+        "demo_reset": "POST /demo/reset-playback",
+        "hint": "Open the dashboard URL in your browser, not this API port.",
+    }
+
+
+@app.post("/demo/reset-playback")
+def reset_demo_playback() -> dict:
+    """Jump historical replay to spike hour so ward agents bid again."""
+    sim = simulator.reset_demo_playback()
+    return {
+        "status": "ok",
+        "playback_hour_index": HISTORICAL_PLAYBACK_START_INDEX,
+        "sim": sim,
+        "hint": "Refresh http://localhost:5174 — expect bids within ~10s",
+    }
+
+
 @app.get("/health")
 def health() -> dict:
     return {
@@ -148,7 +187,10 @@ def health() -> dict:
         "zone_ids": [profile.zone_id for profile in simulator.profiles],
         "reporter_mode": REPORTER_MODE,
         "agent_mode": AGENT_MODE,
+        "offline_mode": OFFLINE_MODE,
+        "ml_service_url": ML_SERVICE_URL,
         "nim_model": NIM_MODEL,
+        "nemoclaw_agent_id": NEMOCLAW_AGENT_ID,
         "sim_tick_sec": SIM_TICK_SEC,
     }
 

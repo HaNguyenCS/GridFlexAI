@@ -45,6 +45,12 @@ class InterventionRequest(BaseModel):
     stress_score_before: int
 
 
+class FeaturePipelineRequest(GridFeatureRow):
+    """Replay or live feature row — optional timestamp for ward replay alignment."""
+
+    timestamp: str | None = None
+
+
 @app.get("/")
 def root() -> Dict[str, Any]:
     return {
@@ -56,12 +62,15 @@ def root() -> Dict[str, Any]:
             "live_mock": "GET /grid/live-mock",
             "live": "GET /grid/live",
             "predict": "POST /grid/predict",
+            "ward_predict": "POST /grid/ward/predict",
             "intervention": "POST /flex/intervention",
             "demo_run": "GET /demo/run",
             "demo_stress": "GET /demo/stress",
             "demo_wards": "GET /demo/wards",
             "agent_rebalance": "GET /agent/rebalance",
+            "agent_rebalance_post": "POST /agent/rebalance",
             "agent_ward_market": "GET /agent/ward-market",
+            "agent_ward_market_post": "POST /agent/ward-market",
         },
     }
 
@@ -186,6 +195,16 @@ def strip_non_model_fields(row: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def run_ward_prediction_pipeline(row: Dict[str, Any]) -> Dict[str, Any]:
+    """System stress + ward distribution for a single feature row."""
+    model_row = strip_non_model_fields(row)
+    prediction = predict_grid_stress(model_row)
+    return predict_ward_stress(
+        system_prediction=prediction,
+        live_row=row,
+    )
+
+
 @app.get("/demo/run")
 def demo_run() -> Dict[str, Any]:
     live_row = grid_live()
@@ -248,15 +267,7 @@ def demo_wards() -> Dict[str, Any]:
     with path.open("r") as file:
         stress_row = json.load(file)
 
-    model_row = strip_non_model_fields(stress_row)
-
-    prediction = predict_grid_stress(model_row)
-    prediction["estimated_system_stress_duration_hours"] = 3.0
-
-    return predict_ward_stress(
-        system_prediction=prediction,
-        live_row=stress_row,
-    )
+    return run_ward_prediction_pipeline(stress_row)
 
 
 @app.get("/agent/rebalance")
@@ -272,16 +283,7 @@ def agent_rebalance() -> Dict[str, Any]:
     with path.open("r") as file:
         stress_row = json.load(file)
 
-    model_row = strip_non_model_fields(stress_row)
-
-    prediction = predict_grid_stress(model_row)
-    prediction["estimated_system_stress_duration_hours"] = 3.0
-
-    ward_result = predict_ward_stress(
-        system_prediction=prediction,
-        live_row=stress_row,
-    )
-
+    ward_result = run_ward_prediction_pipeline(stress_row)
     return build_agent_rebalance_payload(ward_result)
 
 
@@ -298,14 +300,25 @@ def agent_ward_market() -> Dict[str, Any]:
     with path.open("r") as file:
         stress_row = json.load(file)
 
-    model_row = strip_non_model_fields(stress_row)
+    ward_result = run_ward_prediction_pipeline(stress_row)
+    return build_ward_agent_market_payload(ward_result)
 
-    prediction = predict_grid_stress(model_row)
-    prediction["estimated_system_stress_duration_hours"] = 3.0
 
-    ward_result = predict_ward_stress(
-        system_prediction=prediction,
-        live_row=stress_row,
-    )
+@app.post("/grid/ward/predict")
+def grid_ward_predict_post(body: FeaturePipelineRequest) -> Dict[str, Any]:
+    row = body.model_dump(exclude_none=True)
+    return run_ward_prediction_pipeline(row)
 
+
+@app.post("/agent/rebalance")
+def agent_rebalance_post(body: FeaturePipelineRequest) -> Dict[str, Any]:
+    row = body.model_dump(exclude_none=True)
+    ward_result = run_ward_prediction_pipeline(row)
+    return build_agent_rebalance_payload(ward_result)
+
+
+@app.post("/agent/ward-market")
+def agent_ward_market_post(body: FeaturePipelineRequest) -> Dict[str, Any]:
+    row = body.model_dump(exclude_none=True)
+    ward_result = run_ward_prediction_pipeline(row)
     return build_ward_agent_market_payload(ward_result)

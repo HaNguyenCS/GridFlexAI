@@ -134,6 +134,9 @@ class WardStreamSimulator:
     def sim_clock(self) -> dict:
         return self._history.sim_clock(tick_sec=self._tick_sec)
 
+    def reset_demo_playback(self) -> dict:
+        return self._history.reset_playback(HISTORICAL_PLAYBACK_START_INDEX)
+
     @property
     def supply_agent(self) -> SupplyAgent:
         return self._supply_agent

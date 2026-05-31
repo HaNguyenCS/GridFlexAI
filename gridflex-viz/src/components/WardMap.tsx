@@ -4,8 +4,32 @@ import type { MapLayerMouseEvent, MapRef } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 import { statusFillColor } from "../lib/format";
-import type { KeplerFlow } from "../lib/simulationTypes";
+import type { KeplerFlow, KeplerNode } from "../lib/simulationTypes";
 import type { ZoneMetrics } from "../lib/types";
+
+const OFFLINE_MAP = import.meta.env.VITE_OFFLINE === "true";
+
+const DISPATCH_COLORS: Record<string, string> = {
+  accepted: "#38bdf8",
+  rejected: "#f97316",
+};
+
+const RISK_FILL: Record<string, string> = {
+  critical: "#ef4444",
+  high: "#f97316",
+  medium: "#eab308",
+  normal: "#22c55e",
+};
+
+function simNodeFill(node: KeplerNode | undefined, supplyStatus: string | undefined): string {
+  if (!node) return statusFillColor(supplyStatus as ZoneMetrics["status"]);
+  if (node.dispatch_status === "accepted") return DISPATCH_COLORS.accepted;
+  if (node.dispatch_status === "rejected") return DISPATCH_COLORS.rejected;
+  if (node.recommended_action !== "none") {
+    return RISK_FILL[node.risk_level] ?? RISK_FILL.medium;
+  }
+  return statusFillColor(supplyStatus as ZoneMetrics["status"]);
+}
 
 const INITIAL_VIEW = {
   longitude: -79.3832,
@@ -15,7 +39,19 @@ const INITIAL_VIEW = {
   bearing: 0,
 };
 
-const FALLBACK_STYLE = {
+const FALLBACK_STYLE_OFFLINE = {
+  version: 8 as const,
+  sources: {},
+  layers: [
+    {
+      id: "bg",
+      type: "background" as const,
+      paint: { "background-color": "#0b1020" },
+    },
+  ],
+};
+
+const FALLBACK_STYLE_ONLINE = {
   version: 8 as const,
   sources: {
     osm: {
@@ -46,9 +82,10 @@ interface Props {
   selectedZone: string | null;
   onSelectZone: (zoneId: string | null) => void;
   flows?: KeplerFlow[];
+  simNodes?: KeplerNode[];
 }
 
-export function WardMap({ geojsonUrl, zones, selectedZone, onSelectZone, flows = [] }: Props) {
+export function WardMap({ geojsonUrl, zones, selectedZone, onSelectZone, flows = [], simNodes = [] }: Props) {
   const [baseGeoJson, setBaseGeoJson] = useState<GeoJSON.FeatureCollection | null>(
     null
   );
@@ -62,6 +99,12 @@ export function WardMap({ geojsonUrl, zones, selectedZone, onSelectZone, flows =
       .catch(console.error);
   }, [geojsonUrl]);
 
+  const simByWard = useMemo(() => {
+    const map = new Map<string, KeplerNode>();
+    for (const node of simNodes) map.set(node.ward_id, node);
+    return map;
+  }, [simNodes]);
+
   const mergedGeoJson = useMemo(() => {
     if (!baseGeoJson) return null;
     return {
@@ -69,18 +112,23 @@ export function WardMap({ geojsonUrl, zones, selectedZone, onSelectZone, flows =
       features: baseGeoJson.features.map((feature) => {
         const zoneId = String(feature.properties?.zone_id ?? "");
         const live = zones.get(zoneId);
+        const sim = simByWard.get(zoneId);
+        const fill = simNodeFill(sim, live?.status);
         return {
           ...feature,
           properties: {
             ...feature.properties,
             ...live,
+            ...sim,
+            dispatch_status: sim?.dispatch_status ?? "none",
+            accepted_bid_mw: sim?.accepted_bid_mw ?? 0,
             status: live?.status ?? "ok",
-            fill_color: statusFillColor(live?.status),
+            fill_color: fill,
           },
         };
       }),
     } satisfies GeoJSON.FeatureCollection;
-  }, [baseGeoJson, zones]);
+  }, [baseGeoJson, zones, simByWard]);
 
   const flowGeoJson = useMemo((): GeoJSON.FeatureCollection => {
     return {
@@ -156,7 +204,7 @@ export function WardMap({ geojsonUrl, zones, selectedZone, onSelectZone, flows =
     <Map
       ref={setMapRef}
       initialViewState={INITIAL_VIEW}
-      mapStyle={FALLBACK_STYLE}
+      mapStyle={OFFLINE_MAP ? FALLBACK_STYLE_OFFLINE : FALLBACK_STYLE_ONLINE}
       style={{ width: "100%", height: "100%" }}
       interactiveLayerIds={["wards-fill"]}
       onClick={onClick}

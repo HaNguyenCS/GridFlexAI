@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from backend.agents.grid_forecast_agent import grid_forecast_agent
 from backend.agents.llm_orchestrator import llm_orchestrator
 from backend.agents.market_clearing_agent import market_clearing_agent
+from backend.agents.ml_service_orchestrator import ml_service_orchestrator
+from backend.agents.nemoclaw_orchestrator import nemoclaw_orchestrator
 from backend.agents.reporter_agent import reporter_agent
 from backend.agents.ward_agent import build_ward_agents
 from backend.config import AGENT_MODE
@@ -29,6 +31,48 @@ from backend.simulation.system_predictor import predict_grid_stress
 logger = logging.getLogger(__name__)
 
 
+def _build_pipeline_snapshot(
+    *,
+    ward_predictions,
+    ward_decisions,
+    submitted_bids,
+    market_result,
+    kepler_nodes,
+    kepler_flows,
+    stress_before: int,
+    system_prediction,
+) -> dict:
+    cr = market_result.clearing_result
+    return {
+        "forecast": {
+            "stress_score": stress_before,
+            "target_reduction_mw": system_prediction.target_reduction_mw,
+            "risk_level": system_prediction.risk_level.value,
+            "ward_predictions": len(ward_predictions),
+        },
+        "ward_agents": {
+            "total": len(ward_decisions),
+            "submitted": len(submitted_bids),
+            "idle": len(ward_decisions) - len(submitted_bids),
+        },
+        "market_clearing": {
+            "status": cr.clearing_status,
+            "accepted_bids": len(market_result.accepted_bids),
+            "rejected_bids": len(market_result.rejected_bids),
+            "accepted_mw": cr.accepted_reduction_mw,
+            "unfilled_mw": cr.unfilled_reduction_mw,
+            "clearing_price_per_mwh": cr.clearing_price_per_mwh,
+            "stress_before": cr.stress_score_before,
+            "stress_after": cr.stress_score_after,
+        },
+        "dispatch": {
+            "flows": len(kepler_flows),
+            "wards_accepted": sum(1 for n in kepler_nodes if n.dispatch_status == "accepted"),
+            "wards_rejected": sum(1 for n in kepler_nodes if n.dispatch_status == "rejected"),
+        },
+    }
+
+
 async def run_simulation_tick(
     *,
     timestamp: str,
@@ -37,16 +81,56 @@ async def run_simulation_tick(
     ward_names: dict[str, str] | None = None,
     snapshot: dict | None = None,
     include_reporter: bool = True,
+    player=None,
 ) -> SimulationRunResponse:
     names = ward_names or {}
     stress_before = predict_grid_stress(system_features.model_dump())["stress_score_before"]
+    ward_dicts = [w.model_dump() for w in ward_features]
 
-    if AGENT_MODE == "llm":
+    if AGENT_MODE == "ml_service":
+        try:
+            return await ml_service_orchestrator.run_tick(
+                timestamp=timestamp,
+                system_features=system_features,
+                ward_features=ward_features,
+                ward_names=names,
+                snapshot=snapshot,
+                include_reporter=include_reporter,
+                player=player,
+            )
+        except Exception:
+            logger.exception("ML service orchestrator failed; falling back to deterministic agents")
+
+    elif AGENT_MODE == "nemoclaw":
+        try:
+            return await nemoclaw_orchestrator.run_tick(
+                timestamp=timestamp,
+                system_features=system_features.model_dump(),
+                ward_features=ward_dicts,
+                ward_names=names,
+                snapshot=snapshot,
+                stress_before=stress_before,
+            )
+        except Exception:
+            logger.exception("NemoClaw orchestrator failed; falling back to LLM")
+            try:
+                return await llm_orchestrator.run_tick(
+                    timestamp=timestamp,
+                    system_features=system_features.model_dump(),
+                    ward_features=ward_dicts,
+                    ward_names=names,
+                    snapshot=snapshot,
+                    stress_before=stress_before,
+                )
+            except Exception:
+                logger.exception("LLM orchestrator failed; falling back to deterministic agents")
+
+    elif AGENT_MODE == "llm":
         try:
             return await llm_orchestrator.run_tick(
                 timestamp=timestamp,
                 system_features=system_features.model_dump(),
-                ward_features=[w.model_dump() for w in ward_features],
+                ward_features=ward_dicts,
                 ward_names=names,
                 snapshot=snapshot,
                 stress_before=stress_before,
@@ -132,7 +216,16 @@ async def _run_deterministic_tick(
     )
 
     meta = snapshot or {}
-    meta = {**meta, "agent_mode": "deterministic"}
+    meta = {**meta, "agent_mode": "deterministic", "pipeline": _build_pipeline_snapshot(
+        ward_predictions=ward_predictions,
+        ward_decisions=ward_decisions,
+        submitted_bids=submitted_bids,
+        market_result=market_result,
+        kepler_nodes=kepler_nodes,
+        kepler_flows=kepler_flows,
+        stress_before=stress_before,
+        system_prediction=system_prediction,
+    )}
 
     return SimulationRunResponse(
         simulation_id=event_id,
@@ -164,6 +257,7 @@ async def run_simulation_from_simulator(
         ward_names=ward_names,
         snapshot=snapshot,
         include_reporter=include_reporter,
+        player=simulator._history,
     )
 
 

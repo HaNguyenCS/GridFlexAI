@@ -5,7 +5,9 @@ interface Props {
   stressBefore?: number;
   stressAfter?: number;
   clearing?: ClearingResult;
-  bids: SimulationBid[];
+  submittedBids: SimulationBid[];
+  acceptedBids: SimulationBid[];
+  rejectedBids: SimulationBid[];
   alert?: OperatorAlert;
   connection: string;
   targetMw?: number;
@@ -22,7 +24,9 @@ export function SimulationPanel({
   stressBefore,
   stressAfter,
   clearing,
-  bids,
+  submittedBids,
+  acceptedBids,
+  rejectedBids,
   alert,
   connection,
   targetMw,
@@ -65,11 +69,8 @@ export function SimulationPanel({
       {clearing && (
         <div className="grid grid-cols-2 gap-2 text-xs">
           <Metric label="Target MW" value={formatMw(targetMw ?? clearing.target_reduction_mw)} />
-          <Metric
-            label="Accepted MW"
-            value={formatMw(clearing.accepted_reduction_mw)}
-          />
-          <Metric label="Status" value={clearing.clearing_status} />
+          <Metric label="Accepted MW" value={formatMw(clearing.accepted_reduction_mw)} />
+          <Metric label="Market status" value={clearing.clearing_status} />
           <Metric
             label="Clear price"
             value={
@@ -81,31 +82,64 @@ export function SimulationPanel({
         </div>
       )}
 
-      <div>
-        <h3 className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500">
-          Ward bids ({bids.length})
-        </h3>
-        <ul className="max-h-36 space-y-1 overflow-y-auto text-xs">
-          {bids.length === 0 && (
-            <li className="text-slate-500">No bids this tick</li>
-          )}
-          {bids.slice(0, 12).map((bid) => (
-            <li
-              key={bid.bid_id}
-              className="flex justify-between gap-2 rounded bg-white/5 px-2 py-1"
-            >
-              <span className="truncate text-slate-300">{bid.ward_id}</span>
-              <span className="shrink-0 tabular-nums text-slate-400">
-                {formatMw(bid.quantity_mw)} @ ${bid.price_per_mwh.toFixed(0)}
-              </span>
-            </li>
-          ))}
-          {bids.length > 12 && (
-            <li className="text-slate-500">+{bids.length - 12} more</li>
-          )}
-        </ul>
-      </div>
+      {connection === "live" && submittedBids.length === 0 && (
+        <p className="text-xs text-amber-400/90">
+          No ward bids this tick — replay may be on a calm hour. Run{" "}
+          <code className="text-amber-200">curl -X POST localhost:8000/demo/reset-playback</code>{" "}
+          or wait for the spike loop (16:00).
+        </p>
+      )}
+
+      <BidList
+        title={`Accepted by market (${acceptedBids.length})`}
+        bids={acceptedBids}
+        emptyText="No bids accepted yet"
+        accent="accepted"
+      />
+      <BidList
+        title={`Submitted / rejected (${rejectedBids.length})`}
+        bids={rejectedBids}
+        emptyText="No rejected bids"
+        accent="rejected"
+      />
     </section>
+  );
+}
+
+function BidList({
+  title,
+  bids,
+  emptyText,
+  accent,
+}: {
+  title: string;
+  bids: SimulationBid[];
+  emptyText: string;
+  accent: "accepted" | "rejected";
+}) {
+  return (
+    <div>
+      <h3 className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-500">
+        {title}
+      </h3>
+      <ul className="max-h-28 space-y-1 overflow-y-auto text-xs">
+        {bids.length === 0 && <li className="text-slate-500">{emptyText}</li>}
+        {bids.slice(0, 10).map((bid) => (
+          <li
+            key={bid.bid_id}
+            className={`flex justify-between gap-2 rounded px-2 py-1 bid-row-${accent}`}
+          >
+            <span className="truncate text-slate-300">{bid.ward_id}</span>
+            <span className="shrink-0 tabular-nums text-slate-400">
+              {formatMw(bid.quantity_mw)} @ ${bid.price_per_mwh.toFixed(0)}
+            </span>
+          </li>
+        ))}
+        {bids.length > 10 && (
+          <li className="text-slate-500">+{bids.length - 10} more</li>
+        )}
+      </ul>
+    </div>
   );
 }
 

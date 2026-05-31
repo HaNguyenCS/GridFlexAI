@@ -49,11 +49,19 @@ export function AgentObservatory({
     (tick?.market_result.accepted_bids ?? []).map((b) => b.ward_id)
   );
 
+  const isNemoClaw = agentMode === "nemoclaw";
+  const isLlm = agentMode === "llm";
+  const isMlService = agentMode === "ml_service";
+
   const agents = [
     {
       id: "supply",
       name: "Supply Agent",
-      role: agentMode === "llm" ? `NVIDIA NIM · ${supplySummary.agent ?? "llm_supply_agent"}` : "Capacity allocation · inter-ward trades",
+      role: isNemoClaw
+        ? `NemoClaw / OpenClaw · ${supplySummary.agent ?? "nemoclaw_supply_agent"}`
+        : isLlm
+          ? `NVIDIA NIM · ${supplySummary.agent ?? "llm_supply_agent"}`
+          : "Capacity allocation · inter-ward trades",
       status: connStatus(gridLive, gridError),
       stream: "/ws/supply",
       detail: supplySummary.agent ?? "default_capacity_agent",
@@ -65,7 +73,13 @@ export function AgentObservatory({
     {
       id: "forecast",
       name: "Grid Forecast Agent",
-      role: agentMode === "llm" ? "NIM: system stress + 25 ward predictions" : "System stress + 25 ward predictions",
+      role: isNemoClaw
+        ? "NemoClaw: system stress + 25 ward predictions"
+        : isLlm
+          ? "NIM: system stress + 25 ward predictions"
+          : isMlService
+            ? "ML service POST /grid/predict + /grid/ward/predict"
+            : "System stress + 25 ward predictions",
       status: connStatus(simLive, simError),
       stream: "/ws/simulation/live",
       detail: tick
@@ -79,7 +93,13 @@ export function AgentObservatory({
     {
       id: "ward",
       name: "Ward Agents ×25",
-      role: agentMode === "llm" ? "NIM batch decisions (25 wards in one call)" : "Parallel asyncio.gather (deterministic)",
+      role: isNemoClaw
+        ? "OpenClaw batch decisions (25 wards in one turn)"
+        : isLlm
+          ? "NIM batch decisions (25 wards in one call)"
+          : isMlService
+            ? "ML service POST /agent/ward-market → 25 bid payloads"
+            : "Parallel asyncio.gather (deterministic)",
       status: connStatus(simLive, simError),
       stream: "internal",
       detail: tick ? `${submitted} bids · ${decisions.length - submitted} idle` : "Awaiting tick…",
@@ -98,7 +118,13 @@ export function AgentObservatory({
       metrics: [
         {
           label: "Accepted MW",
-          value: tick ? formatMw(tick.market_result.clearing_result.accepted_reduction_mw) : "—",
+          value: tick
+            ? formatMw(
+                (tick.snapshot?.pipeline as { market_clearing?: { accepted_mw?: number } } | undefined)
+                  ?.market_clearing?.accepted_mw ??
+                  tick.market_result.clearing_result.accepted_reduction_mw
+              )
+            : "—",
         },
         {
           label: "Stress",
@@ -111,7 +137,11 @@ export function AgentObservatory({
     {
       id: "reporter",
       name: "Reporter Agent",
-      role: agentMode === "llm" ? "NVIDIA NIM operator narrative" : "Template or NVIDIA NIM (REPORTER_MODE=llm)",
+      role: isNemoClaw
+        ? "NemoClaw operator narrative"
+        : isLlm
+          ? "NVIDIA NIM operator narrative"
+          : "Template or NVIDIA NIM (REPORTER_MODE=llm)",
       status: connStatus(simLive, simError),
       stream: "internal",
       detail: tick?.reporter?.alert.severity ?? "Awaiting tick…",
@@ -128,7 +158,13 @@ export function AgentObservatory({
         <div>
           <h2 className="text-base font-semibold text-slate-100">Agent Observatory</h2>
           <p className="text-xs text-slate-500">
-            {agentMode === "llm" ? "NVIDIA NIM on DGX Spark" : "Deterministic Python agents"}
+            {isNemoClaw
+              ? "NVIDIA NemoClaw / OpenClaw"
+              : isLlm
+                ? "NVIDIA NIM on DGX Spark"
+                : isMlService
+                  ? "ML service API (port 8002)"
+                  : "Deterministic Python agents"}
             {" · "}{tickCount} simulation ticks
             {sim?.historical_date && ` · ${sim.historical_date} ${sim.sim_time}`}
           </p>

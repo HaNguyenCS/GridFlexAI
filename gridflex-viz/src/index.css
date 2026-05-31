@@ -385,6 +385,68 @@ body {
   border-color: rgb(168 85 247 / 0.35);
 }
 
+.market-pipeline {
+  flex-shrink: 0;
+}
+
+.pipeline-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.pipeline-step-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.pipeline-step-arrow {
+  color: rgb(100 116 139);
+  font-size: 0.75rem;
+}
+
+.pipeline-step {
+  min-width: 7rem;
+  flex: 1;
+  border-radius: 0.5rem;
+  border: 1px solid rgb(255 255 255 / 0.08);
+  background: rgb(255 255 255 / 0.03);
+  padding: 0.45rem 0.55rem;
+}
+
+.pipeline-step-done {
+  border-color: rgb(56 189 248 / 0.35);
+  background: rgb(56 189 248 / 0.08);
+}
+
+.pipeline-step-active {
+  border-color: rgb(129 140 248 / 0.4);
+  background: rgb(129 140 248 / 0.1);
+}
+
+.pipeline-step-num {
+  display: inline-flex;
+  height: 1rem;
+  width: 1rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: rgb(255 255 255 / 0.08);
+  font-size: 0.625rem;
+  color: rgb(148 163 184);
+}
+
+.bid-row-accepted {
+  background: rgb(56 189 248 / 0.12);
+}
+
+.bid-row-rejected {
+  background: rgb(249 115 22 / 0.1);
+}
+
 @media (max-width: 960px) {
   .agent-obs-grid {
     grid-template-columns: 1fr;

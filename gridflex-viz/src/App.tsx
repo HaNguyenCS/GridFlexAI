@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { MarketPipeline } from "./components/MarketPipeline";
 import { AgentObservatory } from "./components/AgentObservatory";
 import { IssuePanel } from "./components/IssuePanel";
 import { SidePanel } from "./components/SidePanel";
@@ -94,7 +95,11 @@ export default function App() {
           sim={sim}
           agentMode={
             (simTick?.snapshot?.agent_mode as string | undefined) ??
-            (summary.agent === "llm_supply_agent" ? "llm" : "deterministic")
+            (summary.agent === "nemoclaw_supply_agent"
+              ? "nemoclaw"
+              : summary.agent === "llm_supply_agent"
+                ? "llm"
+                : "ml_service")
           }
         />
       ) : (
@@ -107,6 +112,7 @@ export default function App() {
                 selectedZone={selectedZone}
                 onSelectZone={setSelectedZone}
                 flows={simTick?.kepler_flows ?? []}
+                simNodes={simTick?.kepler_nodes ?? []}
               />
               <div className="legend">
                 {Object.entries(STATUS_COLORS).map(([status, color]) => (
@@ -115,6 +121,18 @@ export default function App() {
                     {status.replace("_", " ")}
                   </span>
                 ))}
+                {simTick && (
+                  <>
+                    <span className="legend-item">
+                      <i style={{ background: "#38bdf8" }} />
+                      bid accepted
+                    </span>
+                    <span className="legend-item">
+                      <i style={{ background: "#f97316" }} />
+                      bid rejected
+                    </span>
+                  </>
+                )}
               </div>
             </div>
 
@@ -139,11 +157,14 @@ export default function App() {
               selectedZone={selectedZone}
               onSelectZone={setSelectedZone}
             />
+            <MarketPipeline tick={simTick} connection={simConnection} />
             <SimulationPanel
               stressBefore={simTick?.market_result.clearing_result.stress_score_before}
               stressAfter={simTick?.market_result.clearing_result.stress_score_after}
               clearing={simTick?.market_result.clearing_result}
-              bids={simTick?.submitted_bids ?? []}
+              submittedBids={simTick?.submitted_bids ?? []}
+              acceptedBids={simTick?.market_result.accepted_bids ?? []}
+              rejectedBids={simTick?.market_result.rejected_bids ?? []}
               alert={simTick?.reporter?.alert}
               connection={simConnection}
               targetMw={simTick?.grid_prediction.target_reduction_mw}

@@ -112,7 +112,8 @@ class HistoricalDemandPlayer:
             )
 
         self.ticks_per_hour = max(1, 60 // SIM_MINUTES_PER_TICK)
-        self._hour_index = start_hour_index % len(self._rows)
+        self._loop_start_index = start_hour_index % len(self._rows)
+        self._hour_index = self._loop_start_index
         self._sub_tick = 0
         self._sim_tick = 0
         self.historical_path = str(historical_path)
@@ -162,7 +163,15 @@ class HistoricalDemandPlayer:
             self._sub_tick = 0
             self._hour_index += 1
             if self._hour_index >= len(self._rows) - 1:
-                self._hour_index = 0
+                self._hour_index = self._loop_start_index
+
+    def reset_playback(self, hour_index: int | None = None) -> dict:
+        """Jump replay clock to demo spike hour."""
+        self._hour_index = (
+            hour_index if hour_index is not None else self._loop_start_index
+        ) % len(self._rows)
+        self._sub_tick = 0
+        return self.sim_clock(tick_sec=2.0)
 
     def sim_clock(self, *, tick_sec: float) -> dict:
         ts = self.current_timestamp()
