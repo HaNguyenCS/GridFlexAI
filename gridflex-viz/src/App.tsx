@@ -4,7 +4,10 @@ import { GridFlexEventFeed } from "./components/GridFlexEventFeed";
 import { WardMap } from "./components/WardMap";
 import { useGridStreams } from "./lib/useGridStreams";
 import { useSimulationStream } from "./lib/useSimulationStream";
+import { useGridStreams as useMapGridStreams } from "./lib/mapGridStreams";
 import type { StreamConnection } from "./lib/types";
+import { fetchTorontoWards } from "./lib/wards";
+import type { Ward } from "./lib/mapTypes";
 
 type AppView = "grid" | "agents";
 
@@ -26,6 +29,7 @@ export default function App() {
   const [stressModeLoading, setStressModeLoading] = useState(false);
   const [stressModeError, setStressModeError] = useState<string | null>(null);
   const [feedCollapsed, setFeedCollapsed] = useState(false);
+  const [wards, setWards] = useState<Ward[]>([]);
 
   const {
     apiBase,
@@ -46,6 +50,18 @@ export default function App() {
     history: simHistory,
     connection: simConnection,
   } = useSimulationStream();
+
+  // Load wards for map grid streams
+  useMemo(() => {
+    fetchTorontoWards().then(setWards).catch(console.error);
+  }, []);
+
+  // Map grid streams for ward severity colors
+  const { wardColors } = useMapGridStreams({
+    wards,
+    enabled: view === "grid",
+    cadenceMs: 2000,
+  });
 
   const stressPhase = simTick?.snapshot?.stress_phase as string | undefined;
   const stressModeFromTick = Boolean(simTick?.snapshot?.stress_mode_enabled);
@@ -228,6 +244,7 @@ export default function App() {
               onSelectZone={setSelectedZone}
               flows={[]}
               simNodes={simTick?.kepler_nodes ?? []}
+              wardGridColors={wardColors}
             />
           </section>
 
